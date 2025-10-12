@@ -41,23 +41,62 @@ func getStats(c *gin.Context) {
 	defer cancel()
 
 	collection := config.GetCollection()
-	count, _ := collection.CountDocuments(ctx, bson.D{})
+
+	// Get real database count
+	totalCount, _ := collection.CountDocuments(ctx, bson.D{})
+
+	// Get count of records with faults
+	faultCount, _ := collection.CountDocuments(ctx, bson.D{
+		{Key: "data.fault_code", Value: bson.D{{Key: "$gt", Value: 0}}},
+	})
+
+	// Get count of normal records
+	normalCount, _ := collection.CountDocuments(ctx, bson.D{
+		{Key: "data.fault_code", Value: 0},
+	})
 
 	c.JSON(http.StatusOK, gin.H{
-		"inserted_count":    services.GetInsertedCount(),
-		"failed_count":      services.GetFailedCount(),
-		"db_document_count": count,
-		"buffer_size":       services.GetBufferSize(),
+		"total_records":  totalCount,                  // Real DB count
+		"normal_records": normalCount,                 // Records without faults
+		"fault_records":  faultCount,                  // Records with faults
+		"inserted_count": services.GetInsertedCount(), // Memory counter
+		"failed_count":   services.GetFailedCount(),
+		"buffer_size":    services.GetBufferSize(),
+		"success_rate":   calculateSuccessRate(services.GetInsertedCount(), services.GetFailedCount()),
 	})
 }
 
-// getAllData returns the latest 100 records
+func calculateSuccessRate(inserted, failed int64) float64 {
+	total := inserted + failed
+	if total == 0 {
+		return 100.0
+	}
+	return float64(inserted) / float64(total) * 100.0
+}
+
+// getAllData returns paginated records
 func getAllData(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Get pagination parameters
+	page := getIntParam(c, "page", 1)
+	limit := getIntParam(c, "limit", 100)
+
+	// Calculate skip
+	skip := (page - 1) * limit
+
 	collection := config.GetCollection()
-	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: -1}}).SetLimit(100)
+
+	// Get total count
+	total, _ := collection.CountDocuments(ctx, bson.D{})
+
+	// Get paginated data
+	opts := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
+		SetSkip(int64(skip)).
+		SetLimit(int64(limit))
+
 	cursor, err := collection.Find(ctx, bson.D{}, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch data"})
@@ -68,10 +107,28 @@ func getAllData(c *gin.Context) {
 	var results []models.InverterData
 	cursor.All(ctx, &results)
 
+	totalPages := (int(total) + limit - 1) / limit
+
 	c.JSON(http.StatusOK, gin.H{
-		"count": len(results),
-		"data":  results,
+		"count":       len(results),
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": totalPages,
+		"has_next":    page < totalPages,
+		"has_prev":    page > 1,
+		"data":        results,
 	})
+}
+
+// Helper function to get integer parameters
+func getIntParam(c *gin.Context, key string, defaultValue int) int {
+	if value := c.Query(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil && intValue > 0 {
+			return intValue
+		}
+	}
+	return defaultValue
 }
 
 // getFaultCodeList returns all fault code definitions
