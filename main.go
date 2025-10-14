@@ -9,12 +9,16 @@ import (
 	"solar_project/config"
 	"solar_project/routes"
 	"solar_project/services"
-
+"solar_project/logger"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
+	logger.OpenLog()
+
+    logger.WriteLog("INFO", "", "STARTUP", "Starting Solar Monitoring System...")
+
 
 	// Initialize database connection
 	if err := config.InitDB(); err != nil {
@@ -28,10 +32,12 @@ func main() {
 	services.InitGenerator(config.GetCollection())
 
 	// Start background services
-	go services.Generate600RecordsPerSecond()
+	// go services.Generate600RecordsPerSecond()
 	go services.PeriodicBatchFlush()
-	go services.ReportStats()
+	// go services.ReportStats()
 
+
+	logger.OpenLog()
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
@@ -53,13 +59,13 @@ func main() {
 }
 
 func printStartupInfo() {
-	fmt.Println("\n🚀 Solar Monitoring System with Fault Detection")
+	fmt.Println("\n Solar Monitoring System with Fault Detection")
 	fmt.Println("================================================")
 	fmt.Println("Server: http://localhost:8080")
-	fmt.Println("\n📊 Basic APIs:")
+	fmt.Println("\n Basic APIs:")
 	fmt.Println("   /api/all        - All data (latest 100)")
 	fmt.Println("   /api/stats      - Insertion statistics")
-	fmt.Println("\n⚠️  Fault Detection APIs:")
+	fmt.Println("\n  Fault Detection APIs:")
 	fmt.Println("   /api/faults/list     - List all fault codes")
 	fmt.Println("   /api/faults/data?code=3  - Get data by fault code")
 	fmt.Println("   /api/faults/stats    - Fault statistics")

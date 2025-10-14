@@ -7,12 +7,18 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	 "solar_project/logger"
+	 "solar_project/constants"
+	 "github.com/google/uuid"
 
 	"solar_project/models"
-
+	
+	"net/http"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/gin-gonic/gin"
 )
+
 
 var (
 	collection     *mongo.Collection
@@ -23,15 +29,45 @@ var (
 	batchSize      = 100
 	faultStats     = make(map[int]int64)
 	faultStatMutex sync.Mutex
+	
 )
 
 // InitGenerator initializes the data generator with MongoDB collection
 func InitGenerator(coll *mongo.Collection) {
 	collection = coll
+	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INIT", "Data generator initialized with MongoDB collection")
+}
+
+
+func GenerateHandler(c *gin.Context) {
+
+	var template models.InverterData
+
+
+	if err := c.ShouldBindJSON(&template); err != nil {
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, "", "API", fmt.Sprintf("Bad request: %v", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+//  // Generate unique ID for this request
+//  requestID := uuid.New().String()[:16]
+
+
+	
+	go Generate600RecordsPerSecond(template)
+
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Data generation started successfully",
+		"template_used": template.DeviceName,
+		
+	})
+
+
 }
 
 // Generate600RecordsPerSecond generates data at 600 records/second
-func Generate600RecordsPerSecond() {
+func Generate600RecordsPerSecond(template models.InverterData) {
 	interval := time.Second / 600
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -41,18 +77,24 @@ func Generate600RecordsPerSecond() {
 	targetRecords := 36000
 
 	for range ticker.C {
+		 // Generate unique ID for this request
+ requestID := uuid.New().String()[:16]
+
+ logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "API", fmt.Sprintf("Data generation requested for template: %s", template.DeviceName))
 		if counter >= targetRecords {
 			elapsed := time.Since(startTime)
-			fmt.Printf("\n✅ Completed! Inserted %d records in %v (%.2f rec/sec)\n",
+			logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "GENERATOR", fmt.Sprintf("Completed! Inserted %d records in %v (%.2f rec/sec)", counter, elapsed, float64(counter)/elapsed.Seconds()))
+			fmt.Printf("\n Completed! Inserted %d records in %v (%.2f rec/sec)\n",
 				counter, elapsed, float64(counter)/elapsed.Seconds())
 
 			time.Sleep(time.Second)
-			FlushBatch()
+			FlushBatch(requestID)
 
-			fmt.Printf("\n📊 Final Stats:\n")
+			fmt.Printf("\nFinal Stats:\n")
 			fmt.Printf("   Success: %d\n", atomic.LoadInt64(&insertedCount))
 			fmt.Printf("   Failed: %d\n\n", atomic.LoadInt64(&failedCount))
-
+			logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "GENERATOR", fmt.Sprintf("Final Stats: Success=%d, Failed=%d",
+			atomic.LoadInt64(&insertedCount), atomic.LoadInt64(&failedCount)))
 			PrintFaultSummary()
 			break
 		}
@@ -73,35 +115,28 @@ func Generate600RecordsPerSecond() {
 		// Modify values if there's a fault
 		if faultCode > 0 {
 			voltage, power, temp = applyFaultEffects(faultCode, voltage, power, temp)
+			logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "FAULT",
+				fmt.Sprintf("Applied fault code %d: adjusted values", faultCode))
 		}
 
-		data := models.InverterData{
-			DeviceType:     "Inverter",
-			DeviceName:     "ESIN1",
-			DeviceID:       "ESDL1",
-			Date:           now.Format("02/01/2006"),
-			Time:           now.Format("15:04:05"),
-			SignalStrength: "-1",
-			Data: models.SensorData{
-				SerialNo:         "1",
-				S1V:              voltage,
-				TotalOutputPower: power,
-				F:                718 + rand.Intn(4) - 2,
-				TodayE:           508 + counter,
-				TotalE:           599879 + counter,
-				InvTemp:          temp,
-				FaultCode:        faultCode,
-			},
-			Timestamp: now,
-		}
+		// clone base template
+		data := template
+		data.Date = now.Format("02/01/2006")
+		data.Time = now.Format("15:04:05")
+		data.Timestamp = now
+		data.DeviceID = fmt.Sprintf("ESDL%d", rand.Intn(600)+1)
+		data.Data.SerialNo = fmt.Sprintf("%d", rand.Intn(600)+1)
+		data.Data.S1V = voltage
+		data.Data.TotalOutputPower = power
+		data.Data.InvTemp = temp
+		data.Data.FaultCode = faultCode
 
 		bufferMutex.Lock()
 		batchBuffer = append(batchBuffer, data)
 		shouldFlush := len(batchBuffer) >= batchSize
 		bufferMutex.Unlock()
-
 		if shouldFlush {
-			go FlushBatch()
+			go FlushBatch(requestID)
 		}
 
 		counter++
@@ -162,7 +197,7 @@ func applyFaultEffects(faultCode, voltage, power, temp int) (int, int, int) {
 	return voltage, power, temp
 }
 
-// updateFaultStats updates fault statistics
+// updateFaultStats updates fault statistics - anlayis the fault data inserted for future api's
 func updateFaultStats(faultCode int) {
 	faultStatMutex.Lock()
 	faultStats[faultCode]++
@@ -189,9 +224,10 @@ func PrintFaultSummary() {
 }
 
 // FlushBatch flushes the batch buffer to database
-func FlushBatch() {
+func FlushBatch(requestID string) {
 	bufferMutex.Lock()
 	if len(batchBuffer) == 0 {
+		logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "FLUSH", "No data to flush — buffer empty")
 		bufferMutex.Unlock()
 		return
 	}
@@ -201,6 +237,8 @@ func FlushBatch() {
 	batchBuffer = batchBuffer[:0]
 	bufferMutex.Unlock()
 
+	logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "FLUSH",
+		fmt.Sprintf("Flushing %d records to MongoDB...", len(toInsert)))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -213,10 +251,15 @@ func FlushBatch() {
 			inserted = len(result.InsertedIDs)
 		}
 		failed := len(toInsert) - inserted
-		atomic.AddInt64(&insertedCount, int64(inserted))
+		atomic.AddInt64(&insertedCount, int64(inserted)) //safely updated counters (no race condition)
 		atomic.AddInt64(&failedCount, int64(failed))
+		logger.WriteLog(constants.LOG_LEVEL_ERROR,requestID, "FLUSH",
+			fmt.Sprintf("Batch insert failed — Inserted: %d, Failed: %d, Error: %v",
+				inserted, failed, err))
 	} else {
 		atomic.AddInt64(&insertedCount, int64(len(toInsert)))
+		logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "FLUSH",
+			fmt.Sprintf("Batch inserted successfully: %d records", len(toInsert)))
 	}
 }
 
@@ -225,7 +268,7 @@ func PeriodicBatchFlush() {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for range ticker.C {
-		FlushBatch()
+		FlushBatch("") // Empty requestID for periodic flushes
 	}
 }
 
@@ -252,7 +295,7 @@ func ReportStats() {
 		}
 		faultStatMutex.Unlock()
 
-		fmt.Printf("📊 Total=%d | Failed=%d | RPS=%.0f | Faults=%d\n",
+		fmt.Printf(" Total=%d | Failed=%d | RPS=%.0f | Faults=%d\n",
 			currentCount, atomic.LoadInt64(&failedCount), rps, faultCount)
 
 		lastCount = currentCount

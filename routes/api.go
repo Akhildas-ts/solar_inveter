@@ -22,6 +22,7 @@ func SetupRoutes(r *gin.Engine) {
 		// Basic routes
 		api.GET("/all", getAllData)
 		api.GET("/stats", getStats)
+		api.POST("/data",services.GenerateHandler)
 
 		// Fault detection routes
 		faults := api.Group("/faults")
