@@ -4,17 +4,36 @@ import "time"
 
 // InverterData represents the main inverter data structure
 type InverterData struct {
-	DeviceType     string     `json:"device_type" bson:"device_type"`
-	DeviceName     string     `json:"device_name" bson:"device_name"`
-	DeviceID       string     `json:"device_id" bson:"device_id"`
-	Date           string     `json:"date" bson:"date"`
-	Time           string     `json:"time" bson:"time"`
-	SignalStrength string     `json:"signal_strength" bson:"signal_strength"`
-	Data           SensorData `json:"data" bson:"data"`
-	Timestamp      time.Time  `json:"timestamp" bson:"timestamp"`
+	DeviceType     string          `json:"device_type" bson:"device_type"`
+	DeviceName     string          `json:"device_name" bson:"device_name"`
+	DeviceID       string          `json:"device_id" bson:"device_id"`
+	Date           string          `json:"date" bson:"date"`
+	Time           string          `json:"time" bson:"time"`
+	SignalStrength string          `json:"signal_strength" bson:"signal_strength"`
+	Data           InverterDetails `json:"data" bson:"data"`
+	Timestamp      time.Time       `json:"timestamp" bson:"timestamp"`
 }
 
-// SensorData represents the sensor readings
+// InverterDetails represents inner inverter readings
+type InverterDetails struct {
+	SerialNo         string `json:"serial_no" bson:"serial_no"`
+	S1V              int    `json:"s1_v" bson:"s1_v"`
+	TotalOutputPower int    `json:"total_output_power" bson:"total_output_power"`
+	InvTemp          int    `json:"inv_temp" bson:"inv_temp"`
+	FaultCode        int    `json:"fault_code" bson:"fault_code"`
+}
+
+// SimplifiedData is a lightweight version (for APIs, charts, etc.)
+type SimplifiedData struct {
+	DeviceID  string    `json:"device_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Voltage   int       `json:"voltage"`
+	Power     int       `json:"power"`
+	Temp      int       `json:"temp"`
+	FaultCode int       `json:"fault_code"`
+}
+
+// SensorData represents detailed sensor-level readings
 type SensorData struct {
 	SerialNo         string `json:"serial_no" bson:"serial_no"`
 	S1V              int    `json:"s1v" bson:"s1v"`
@@ -26,7 +45,7 @@ type SensorData struct {
 	FaultCode        int    `json:"fault_code" bson:"fault_code"`
 }
 
-// FaultInfo represents fault code information
+// FaultInfo represents fault code metadata
 type FaultInfo struct {
 	Code        int    `json:"code"`
 	Name        string `json:"name"`
@@ -35,7 +54,7 @@ type FaultInfo struct {
 	Action      string `json:"action"`
 }
 
-// FaultCodes contains all fault code definitions
+// FaultCodes contains all fault definitions
 var FaultCodes = map[int]FaultInfo{
 	0: {
 		Code:        0,
