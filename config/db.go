@@ -1,59 +1,60 @@
 package config
 
 import (
-	"context"
-	"time"
+	"fmt"
+	"os"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 )
 
 var (
-	client     *mongo.Client
-	collection *mongo.Collection
+	client *influxdb3.Client
 )
 
-// InitDB initializes the MongoDB connection
+// InitDB initializes the InfluxDB connection
 func InitDB() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Get configuration from environment variables
+	url := getEnv("INFLUXDB_URL", "https://us-east-1-1.aws.cloud2.influxdata.com")
+	token := getEnv("INFLUXDB_TOKEN", "")
 
-	clientOptions := options.Client().
-		ApplyURI("mongodb://localhost:27017").
-		SetMaxPoolSize(50).
-		SetMinPoolSize(10)
+	if token == "" {
+		return fmt.Errorf("INFLUXDB_TOKEN environment variable is required")
+	}
 
+	// Initialize InfluxDB 3.0 client
 	var err error
-	client, err = mongo.Connect(ctx, clientOptions)
+	client, err = influxdb3.New(influxdb3.ClientConfig{
+		Host:     url,
+		Token:    token,
+		Database: getEnv("INFLUXDB_DATABASE", "solar_monitoring"),
+	})
+
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create InfluxDB client: %w", err)
 	}
 
-	err = client.Ping(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	collection = client.Database("solar_monitoring").Collection("inverter_data")
+	fmt.Println("✓ Connected to InfluxDB 3.0 successfully!")
 
 	return nil
 }
 
-// GetClient returns the MongoDB client
-func GetClient() *mongo.Client {
+// GetClient returns the InfluxDB client
+func GetClient() *influxdb3.Client {
 	return client
 }
 
-// GetCollection returns the inverter data collection
-func GetCollection() *mongo.Collection {
-	return collection
-}
-
-// CloseDB closes the MongoDB connection
+// CloseDB closes the InfluxDB connection
 func CloseDB() {
 	if client != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		client.Disconnect(ctx)
+		client.Close()
 	}
+}
+
+// Helper function to get environment variables with default values
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }

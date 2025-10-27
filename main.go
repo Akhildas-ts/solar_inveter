@@ -12,28 +12,35 @@ import (
 	"time"
 
 	"solar_project/config"
+	"solar_project/logger"
 	"solar_project/routes"
 	"solar_project/services"
-	"solar_project/logger"
+
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load environment variables from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found, using system environment variables")
+	}
+
 	rand.Seed(time.Now().UnixNano())
 	logger.OpenLog()
 
-	logger.WriteLog("INFO", "", "STARTUP", "Starting Solar Monitoring System...")
+	logger.WriteLog("INFO", "", "STARTUP", "Starting Solar Monitoring System with InfluxDB...")
 
-	// Initialize database connection
+	// Initialize InfluxDB connection
 	if err := config.InitDB(); err != nil {
-		log.Fatal("Failed to initialize database:", err)
+		log.Fatal("Failed to initialize InfluxDB:", err)
 	}
 	defer config.CloseDB()
 
-	fmt.Println("✓ Connected to MongoDB successfully!")
+	fmt.Println("✓ Connected to InfluxDB successfully!")
 
 	// Initialize data generator service
-	services.InitGenerator(config.GetCollection())
+	services.InitGenerator(config.GetClient())
 
 	// Start background services
 	go services.PeriodicBatchFlush()
@@ -67,16 +74,15 @@ func main() {
 	}()
 
 	// ============ GRACEFUL SHUTDOWN HANDLING ============
-	// Wait for interrupt signal (Ctrl+C)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	
-	<-quit // Block until signal received
-	
+
+	<-quit
+
 	fmt.Println("\n🛑 Shutdown signal received. Gracefully shutting down...")
 	logger.WriteLog("INFO", "", "SHUTDOWN", "Shutdown signal received")
 
-	// Gracefully shutdown the server (wait for ongoing requests to finish)
+	// Gracefully shutdown the server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -84,7 +90,7 @@ func main() {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
 
-	// Flush remaining data to MongoDB
+	// Flush remaining data to InfluxDB
 	services.GracefulShutdown()
 
 	fmt.Println("✓ Server exited gracefully")
@@ -92,8 +98,8 @@ func main() {
 }
 
 func printStartupInfo() {
-	fmt.Println("\n☀️  Solar Monitoring System with Fault Detection")
-	fmt.Println("================================================")
+	fmt.Println("\n☀️  Solar Monitoring System with Fault Detection (InfluxDB)")
+	fmt.Println("==========================================================")
 	fmt.Println("Server: http://localhost:8080")
 	fmt.Println("\n📊 Basic APIs:")
 	fmt.Println("   /api/all        - All data (latest 100)")

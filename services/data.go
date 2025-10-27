@@ -6,44 +6,45 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"solar_project/logger"
-	"solar_project/constants"
-	"solar_project/models"
-	"github.com/google/uuid"
 
 	"net/http"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+
+	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"solar_project/constants"
+	"solar_project/logger"
+	"solar_project/models"
 )
 
 var (
-	collection     *mongo.Collection
+	client         *influxdb3.Client
 	insertedCount  int64
 	failedCount    int64
-	batchBuffer    []interface{}
+	batchBuffer    []*influxdb3.Point
 	bufferMutex    sync.Mutex
-	flushMutex     sync.Mutex  // ← NEW: Prevent concurrent flushes
+	flushMutex     sync.Mutex
 	batchSize      = 100
 	faultStats     = make(map[int]int64)
 	faultStatMutex sync.Mutex
-	isShuttingDown atomic.Bool  // ← NEW: Graceful shutdown flag
+	isShuttingDown atomic.Bool
 )
 
-// InitGenerator initializes the Mongo collection reference
-func InitGenerator(coll *mongo.Collection) {
-	collection = coll
-	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INIT", "Data receiver initialized with MongoDB collection")
+// InitGenerator initializes the InfluxDB client reference
+func InitGenerator(cli *influxdb3.Client) {
+	client = cli
+	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INIT", "Data receiver initialized with InfluxDB 3.0 client")
 }
 
 // InverterPayload matches the client's JSON structure
 type InverterPayload struct {
-	DeviceType     string             `json:"device_type"`
-	DeviceName     string             `json:"device_name"`
-	DeviceID       string             `json:"device_id"`
-	Date           string             `json:"date"`
-	Time           string             `json:"time"`
-	SignalStrength string             `json:"signal_strength"`
+	DeviceType     string                 `json:"device_type"`
+	DeviceName     string                 `json:"device_name"`
+	DeviceID       string                 `json:"device_id"`
+	Date           string                 `json:"date"`
+	Time           string                 `json:"time"`
+	SignalStrength string                 `json:"signal_strength"`
 	Data           models.InverterDetails `json:"data"`
 }
 
@@ -64,36 +65,36 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// Convert to full model
-	record := models.InverterData{
-		DeviceType:     payload.DeviceType,
-		DeviceName:     payload.DeviceName,
-		DeviceID:       payload.DeviceID,
-		Date:           payload.Date,
-		Time:           payload.Time,
-		Timestamp:      time.Now(), //client time_ date
-		SignalStrength: payload.SignalStrength,
-		Data:           payload.Data,
-	}
+	// Create InfluxDB 3.0 point
+	point := influxdb3.NewPointWithMeasurement("inverter_data").
+		SetTag("device_type", payload.DeviceType).
+		SetTag("device_name", payload.DeviceName).
+		SetTag("device_id", payload.DeviceID).
+		SetTag("signal_strength", payload.SignalStrength).
+		SetField("serial_no", payload.Data.SerialNo).
+		SetField("voltage", int64(payload.Data.S1V)).
+		SetField("total_output_power", int64(payload.Data.TotalOutputPower)).
+		SetField("temperature", int64(payload.Data.InvTemp)).
+		SetField("fault_code", int64(payload.Data.FaultCode)).
+		SetField("date", payload.Date).
+		SetField("time", payload.Time).
+		SetTimestamp(time.Now())
 
 	// Add to buffer (thread-safe)
 	bufferMutex.Lock()
-	batchBuffer = append(batchBuffer, record)
+	batchBuffer = append(batchBuffer, point)
 	currentBufferSize := len(batchBuffer)
 	shouldFlush := len(batchBuffer) >= batchSize
 	bufferMutex.Unlock()
 
 	// Update fault stats
-	if record.Data.FaultCode > 0 {
-		updateFaultStats(record.Data.FaultCode)
-		// logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "FAULT",
-		// 	fmt.Sprintf("Received fault code %d for device %s",
-		// 		record.Data.FaultCode, record.DeviceID))
+	if payload.Data.FaultCode > 0 {
+		updateFaultStats(payload.Data.FaultCode)
 	}
 
-	// Flush batch if buffer full (synchronously to prevent race)
+	// Flush batch if buffer full
 	if shouldFlush {
-		FlushBatch(requestID)  // ← CHANGED: Synchronous call
+		FlushBatch(requestID)
 	}
 
 	// Respond quickly
@@ -104,9 +105,8 @@ func GenerateHandler(c *gin.Context) {
 	})
 }
 
-// FlushBatch writes buffered data to MongoDB (thread-safe)
+// FlushBatch writes buffered data to InfluxDB (thread-safe)
 func FlushBatch(requestID string) {
-	// Prevent concurrent flushes
 	flushMutex.Lock()
 	defer flushMutex.Unlock()
 
@@ -115,31 +115,22 @@ func FlushBatch(requestID string) {
 		bufferMutex.Unlock()
 		return
 	}
-	toInsert := make([]interface{}, len(batchBuffer))
+	toInsert := make([]*influxdb3.Point, len(batchBuffer))
 	copy(toInsert, batchBuffer)
-	batchBuffer = batchBuffer[:0]  // Clear buffer
+	batchBuffer = batchBuffer[:0]
 	bufferMutex.Unlock()
 
-	// logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "FLUSH",
-	// 	fmt.Sprintf("Flushing %d records to MongoDB...", len(toInsert)))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)  // ← Increased timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	opts := options.InsertMany().SetOrdered(false)
-	result, err := collection.InsertMany(ctx, toInsert, opts)
+	// Write points to InfluxDB 3.0
+	err := client.WritePoints(ctx, toInsert)
 
 	if err != nil {
-		inserted := 0
-		if result != nil {
-			inserted = len(result.InsertedIDs)
-		}
-		failed := len(toInsert) - inserted
-		atomic.AddInt64(&insertedCount, int64(inserted))
-		atomic.AddInt64(&failedCount, int64(failed))
+		atomic.AddInt64(&failedCount, int64(len(toInsert)))
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "FLUSH",
-			fmt.Sprintf("Batch insert failed — Inserted: %d, Failed: %d, Error: %v",
-				inserted, failed, err))
+			fmt.Sprintf("Batch insert failed — %d records, Error: %v",
+				len(toInsert), err))
 	} else {
 		atomic.AddInt64(&insertedCount, int64(len(toInsert)))
 		logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "FLUSH",
@@ -210,13 +201,11 @@ func ReportStats() {
 func GracefulShutdown() {
 	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "SHUTDOWN", "Starting graceful shutdown...")
 	isShuttingDown.Store(true)
-	
-	// Give in-flight requests time to complete
+
 	time.Sleep(500 * time.Millisecond)
-	
-	// Final flush
+
 	FlushBatch("SHUTDOWN")
-	
+
 	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "SHUTDOWN",
 		fmt.Sprintf("Shutdown complete. Total inserted: %d, Failed: %d",
 			GetInsertedCount(), GetFailedCount()))
