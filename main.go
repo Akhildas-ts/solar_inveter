@@ -29,7 +29,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	logger.OpenLog()
 
-	logger.WriteLog("INFO", "", "STARTUP", "Starting Solar Monitoring System with InfluxDB...")
+	logger.WriteLog("INFO", "", "STARTUP", "Starting Solar Monitoring System with InfluxDB 3.0...")
 
 	// Initialize InfluxDB connection
 	if err := config.InitDB(); err != nil {
@@ -37,7 +37,7 @@ func main() {
 	}
 	defer config.CloseDB()
 
-	fmt.Println("✓ Connected to InfluxDB successfully!")
+	fmt.Println("✓ Connected to InfluxDB 3.0 successfully!")
 
 	// Initialize data generator service
 	services.InitGenerator(config.GetClient())
@@ -98,17 +98,13 @@ func main() {
 }
 
 func printStartupInfo() {
-	fmt.Println("\n☀️  Solar Monitoring System with Fault Detection (InfluxDB)")
-	fmt.Println("==========================================================")
+	fmt.Println("\n☀️  Solar Monitoring System with Fault Detection (InfluxDB 3.0)")
+	fmt.Println("================================================================")
 	fmt.Println("Server: http://localhost:8080")
 	fmt.Println("\n📊 Basic APIs:")
-	fmt.Println("   /api/all        - All data (latest 100)")
 	fmt.Println("   /api/stats      - Insertion statistics")
+	fmt.Println("   /api/data       - POST endpoint for sending data")
 	fmt.Println("\n⚠️  Fault Detection APIs:")
 	fmt.Println("   /api/faults/list     - List all fault codes")
-	fmt.Println("   /api/faults/data?code=3  - Get data by fault code")
-	fmt.Println("   /api/faults/stats    - Fault statistics")
-	fmt.Println("   /api/faults/active   - Active faults only")
-	fmt.Println("   /api/faults/latest   - Latest 50 faults")
 	fmt.Println("\n💡 Press Ctrl+C to shutdown gracefully\n")
 }

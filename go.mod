@@ -8,6 +8,7 @@ require (
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.10.0
 	github.com/gin-gonic/gin v1.11.0
 	github.com/google/uuid v1.6.0
+	github.com/joho/godotenv v1.5.1
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
 	github.com/sirupsen/logrus v1.9.3
 )
@@ -26,7 +27,6 @@ require (
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/influxdata/line-protocol/v2 v2.2.1 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -41,7 +41,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect

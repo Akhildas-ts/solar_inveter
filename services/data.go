@@ -34,7 +34,8 @@ var (
 // InitGenerator initializes the InfluxDB client reference
 func InitGenerator(cli *influxdb3.Client) {
 	client = cli
-	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INIT", "Data receiver initialized with InfluxDB 3.0 client")
+	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INIT", 
+		"Data receiver initialized with InfluxDB 3.0 client")
 }
 
 // InverterPayload matches the client's JSON structure
@@ -76,8 +77,8 @@ func GenerateHandler(c *gin.Context) {
 		SetField("total_output_power", int64(payload.Data.TotalOutputPower)).
 		SetField("temperature", int64(payload.Data.InvTemp)).
 		SetField("fault_code", int64(payload.Data.FaultCode)).
-		SetField("date", payload.Date).
-		SetField("time", payload.Time).
+		SetField("reading_date", payload.Date).      // ✅ Fixed: renamed from "date"
+		SetField("reading_time", payload.Time).      // ✅ Fixed: renamed from "time"
 		SetTimestamp(time.Now())
 
 	// Add to buffer (thread-safe)
@@ -120,21 +121,24 @@ func FlushBatch(requestID string) {
 	batchBuffer = batchBuffer[:0]
 	bufferMutex.Unlock()
 
+	logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "FLUSH",
+		fmt.Sprintf("Attempting to write %d points to InfluxDB", len(toInsert)))
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Write points to InfluxDB 3.0
-	err := client.WritePoints(ctx, toInsert)
+	// Write points to InfluxDB 3.0 with database option
+	err := client.WritePoints(ctx, toInsert, influxdb3.WithDatabase("solar_monitoring"))
 
 	if err != nil {
 		atomic.AddInt64(&failedCount, int64(len(toInsert)))
+		fmt.Printf("❌ WRITE ERROR: %v\n", err) // Print error to console
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "FLUSH",
-			fmt.Sprintf("Batch insert failed — %d records, Error: %v",
-				len(toInsert), err))
+			fmt.Sprintf("❌ Batch insert FAILED — %d records, Error: %v", len(toInsert), err))
 	} else {
 		atomic.AddInt64(&insertedCount, int64(len(toInsert)))
 		logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "FLUSH",
-			fmt.Sprintf("Batch inserted successfully: %d records", len(toInsert)))
+			fmt.Sprintf("✅ Batch inserted successfully: %d records", len(toInsert)))
 	}
 }
 

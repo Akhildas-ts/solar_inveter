@@ -33,7 +33,9 @@ func InitDB() error {
 		return fmt.Errorf("failed to create InfluxDB client: %w", err)
 	}
 
-	fmt.Println("✓ Connected to InfluxDB 3.0 successfully!")
+	fmt.Println("✓ InfluxDB client created successfully!")
+	fmt.Printf("  URL: %s\n", url)
+	fmt.Printf("  Database: %s\n", getEnv("INFLUXDB_DATABASE", "solar_monitoring"))
 
 	return nil
 }

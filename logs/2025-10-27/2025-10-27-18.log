@@ -1,0 +1,76 @@
+2025-10-27 18:14:55.402 [INFO] [STARTUP] [no-uuid-found] | Starting Solar Monitoring System with InfluxDB 3.0...
+2025-10-27 18:14:55.403 [INFO] [INIT] [no-uuid-found] | Data receiver initialized with InfluxDB 3.0 client
+2025-10-27 18:15:15.802 [DEBUG] [FLUSH] [PERIODIC] | Attempting to write 65 points to InfluxDB
+2025-10-27 18:15:16.718 [INFO] [FLUSH] [PERIODIC] | ✅ Batch inserted successfully: 65 records
+2025-10-27 18:15:16.718 [DEBUG] [FLUSH] [PERIODIC] | Attempting to write 549 points to InfluxDB
+2025-10-27 18:15:17.002 [INFO] [FLUSH] [PERIODIC] | ✅ Batch inserted successfully: 549 records
+2025-10-27 18:15:17.002 [DEBUG] [FLUSH] [7c200e5a-07f1-43] | Attempting to write 171 points to InfluxDB
+2025-10-27 18:15:17.280 [INFO] [FLUSH] [7c200e5a-07f1-43] | ✅ Batch inserted successfully: 171 records
+2025-10-27 18:15:17.281 [DEBUG] [FLUSH] [4690e940-b9d2-46] | Attempting to write 167 points to InfluxDB
+2025-10-27 18:15:17.556 [INFO] [FLUSH] [4690e940-b9d2-46] | ✅ Batch inserted successfully: 167 records
+2025-10-27 18:15:17.556 [DEBUG] [FLUSH] [4170d461-5634-4d] | Attempting to write 143 points to InfluxDB
+2025-10-27 18:15:17.852 [INFO] [FLUSH] [4170d461-5634-4d] | ✅ Batch inserted successfully: 143 records
+2025-10-27 18:15:17.852 [DEBUG] [FLUSH] [14cb13d9-54a3-4a] | Attempting to write 168 points to InfluxDB
+2025-10-27 18:15:18.126 [INFO] [FLUSH] [14cb13d9-54a3-4a] | ✅ Batch inserted successfully: 168 records
+2025-10-27 18:15:18.126 [DEBUG] [FLUSH] [5fc0966f-4a4d-48] | Attempting to write 162 points to InfluxDB
+2025-10-27 18:15:18.404 [INFO] [FLUSH] [5fc0966f-4a4d-48] | ✅ Batch inserted successfully: 162 records
+2025-10-27 18:15:18.404 [DEBUG] [FLUSH] [790f560a-dc48-40] | Attempting to write 166 points to InfluxDB
+2025-10-27 18:15:18.673 [INFO] [FLUSH] [790f560a-dc48-40] | ✅ Batch inserted successfully: 166 records
+2025-10-27 18:15:18.673 [DEBUG] [FLUSH] [251cda8b-9525-4a] | Attempting to write 155 points to InfluxDB
+2025-10-27 18:15:18.947 [INFO] [FLUSH] [251cda8b-9525-4a] | ✅ Batch inserted successfully: 155 records
+2025-10-27 18:15:18.947 [DEBUG] [FLUSH] [8a16aede-b9d1-4f] | Attempting to write 165 points to InfluxDB
+2025-10-27 18:15:19.221 [INFO] [FLUSH] [8a16aede-b9d1-4f] | ✅ Batch inserted successfully: 165 records
+2025-10-27 18:15:19.221 [DEBUG] [FLUSH] [d7030516-d6b9-4f] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:19.493 [INFO] [FLUSH] [d7030516-d6b9-4f] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:19.493 [DEBUG] [FLUSH] [9f61013e-9e23-47] | Attempting to write 163 points to InfluxDB
+2025-10-27 18:15:19.765 [INFO] [FLUSH] [9f61013e-9e23-47] | ✅ Batch inserted successfully: 163 records
+2025-10-27 18:15:19.765 [DEBUG] [FLUSH] [1db88732-9854-45] | Attempting to write 162 points to InfluxDB
+2025-10-27 18:15:20.040 [INFO] [FLUSH] [1db88732-9854-45] | ✅ Batch inserted successfully: 162 records
+2025-10-27 18:15:20.040 [DEBUG] [FLUSH] [d957eaa1-d2ef-49] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:20.399 [INFO] [FLUSH] [d957eaa1-d2ef-49] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:20.399 [DEBUG] [FLUSH] [b6e0a5e2-3703-44] | Attempting to write 216 points to InfluxDB
+2025-10-27 18:15:20.685 [INFO] [FLUSH] [b6e0a5e2-3703-44] | ✅ Batch inserted successfully: 216 records
+2025-10-27 18:15:20.686 [DEBUG] [FLUSH] [741aeb1e-97c1-41] | Attempting to write 172 points to InfluxDB
+2025-10-27 18:15:20.970 [INFO] [FLUSH] [741aeb1e-97c1-41] | ✅ Batch inserted successfully: 172 records
+2025-10-27 18:15:20.970 [DEBUG] [FLUSH] [a8c409b3-ca05-46] | Attempting to write 170 points to InfluxDB
+2025-10-27 18:15:21.253 [INFO] [FLUSH] [a8c409b3-ca05-46] | ✅ Batch inserted successfully: 170 records
+2025-10-27 18:15:21.253 [DEBUG] [FLUSH] [87070b29-abbf-48] | Attempting to write 134 points to InfluxDB
+2025-10-27 18:15:21.524 [INFO] [FLUSH] [87070b29-abbf-48] | ✅ Batch inserted successfully: 134 records
+2025-10-27 18:15:21.524 [DEBUG] [FLUSH] [05782540-984e-4a] | Attempting to write 160 points to InfluxDB
+2025-10-27 18:15:21.797 [INFO] [FLUSH] [05782540-984e-4a] | ✅ Batch inserted successfully: 160 records
+2025-10-27 18:15:21.797 [DEBUG] [FLUSH] [dadc7f68-10db-44] | Attempting to write 165 points to InfluxDB
+2025-10-27 18:15:22.075 [INFO] [FLUSH] [dadc7f68-10db-44] | ✅ Batch inserted successfully: 165 records
+2025-10-27 18:15:22.076 [DEBUG] [FLUSH] [afbf016f-a122-43] | Attempting to write 166 points to InfluxDB
+2025-10-27 18:15:22.392 [INFO] [FLUSH] [afbf016f-a122-43] | ✅ Batch inserted successfully: 166 records
+2025-10-27 18:15:22.392 [DEBUG] [FLUSH] [7939bd12-f15b-46] | Attempting to write 191 points to InfluxDB
+2025-10-27 18:15:22.671 [INFO] [FLUSH] [7939bd12-f15b-46] | ✅ Batch inserted successfully: 191 records
+2025-10-27 18:15:22.671 [DEBUG] [FLUSH] [497e5a82-9e1d-49] | Attempting to write 167 points to InfluxDB
+2025-10-27 18:15:22.944 [INFO] [FLUSH] [497e5a82-9e1d-49] | ✅ Batch inserted successfully: 167 records
+2025-10-27 18:15:22.945 [DEBUG] [FLUSH] [3240b0c9-3e73-40] | Attempting to write 163 points to InfluxDB
+2025-10-27 18:15:23.222 [INFO] [FLUSH] [3240b0c9-3e73-40] | ✅ Batch inserted successfully: 163 records
+2025-10-27 18:15:23.222 [DEBUG] [FLUSH] [1c314340-0150-4b] | Attempting to write 166 points to InfluxDB
+2025-10-27 18:15:23.494 [INFO] [FLUSH] [1c314340-0150-4b] | ✅ Batch inserted successfully: 166 records
+2025-10-27 18:15:23.494 [DEBUG] [FLUSH] [ad0cfe03-bf49-46] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:23.773 [INFO] [FLUSH] [ad0cfe03-bf49-46] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:23.774 [DEBUG] [FLUSH] [15d21e42-713d-49] | Attempting to write 168 points to InfluxDB
+2025-10-27 18:15:24.071 [INFO] [FLUSH] [15d21e42-713d-49] | ✅ Batch inserted successfully: 168 records
+2025-10-27 18:15:24.071 [DEBUG] [FLUSH] [119e68dc-1134-4b] | Attempting to write 178 points to InfluxDB
+2025-10-27 18:15:24.343 [INFO] [FLUSH] [119e68dc-1134-4b] | ✅ Batch inserted successfully: 178 records
+2025-10-27 18:15:24.343 [DEBUG] [FLUSH] [6a1a1535-62c9-46] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:24.618 [INFO] [FLUSH] [6a1a1535-62c9-46] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:24.618 [DEBUG] [FLUSH] [69933070-3f6e-47] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:24.894 [INFO] [FLUSH] [69933070-3f6e-47] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:24.894 [DEBUG] [FLUSH] [8a5ff21d-54b2-4e] | Attempting to write 165 points to InfluxDB
+2025-10-27 18:15:25.167 [INFO] [FLUSH] [8a5ff21d-54b2-4e] | ✅ Batch inserted successfully: 165 records
+2025-10-27 18:15:25.167 [DEBUG] [FLUSH] [fe2367e6-1e7a-42] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:25.440 [INFO] [FLUSH] [fe2367e6-1e7a-42] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:25.441 [DEBUG] [FLUSH] [46502dfe-ded7-44] | Attempting to write 164 points to InfluxDB
+2025-10-27 18:15:25.716 [INFO] [FLUSH] [46502dfe-ded7-44] | ✅ Batch inserted successfully: 164 records
+2025-10-27 18:15:25.716 [DEBUG] [FLUSH] [afd5af3c-9a7b-43] | Attempting to write 165 points to InfluxDB
+2025-10-27 18:15:25.998 [INFO] [FLUSH] [afd5af3c-9a7b-43] | ✅ Batch inserted successfully: 165 records
+2025-10-27 18:15:25.998 [DEBUG] [FLUSH] [60e98839-8e56-49] | Attempting to write 70 points to InfluxDB
+2025-10-27 18:15:26.277 [INFO] [FLUSH] [60e98839-8e56-49] | ✅ Batch inserted successfully: 70 records
+2025-10-27 18:35:47.933 [INFO] [SHUTDOWN] [no-uuid-found] | Shutdown signal received
+2025-10-27 18:35:47.935 [INFO] [SHUTDOWN] [no-uuid-found] | Starting graceful shutdown...
+2025-10-27 18:35:48.436 [INFO] [SHUTDOWN] [no-uuid-found] | Shutdown complete. Total inserted: 6000, Failed: 0
+2025-10-27 18:35:48.437 [INFO] [SHUTDOWN] [no-uuid-found] | Server exited gracefully
