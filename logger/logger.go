@@ -1,16 +1,16 @@
 package logger
 
 import (
-	"compress/gzip"
 	"fmt"
-	"io"
+    "io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
+    "strconv"
+    "compress/gzip"
 
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
-	log "github.com/sirupsen/logrus"
+	"github.com/lestrrat-go/file-rotatelogs"
+    log "github.com/sirupsen/logrus"
 )
 
 var IsDebug = true // Set this to true or false based on your debug preference
@@ -70,16 +70,17 @@ func OpenLog() {
 	log.SetFormatter(logFormatter)
 
 	// Set log level based on IsDebug flag
-	if IsDebug {
-		log.SetLevel(log.DebugLevel)
-	} else {
-		log.SetLevel(log.InfoLevel)
-	}
+    if IsDebug {
+        log.SetLevel(log.DebugLevel)
+    } else {
+        log.SetLevel(log.InfoLevel)
+    }
 
 	logDirectory := os.Getenv("LOG_DIRECTORY")
-	if logDirectory == "" {
-		logDirectory = "./logs"
-	}
+if logDirectory == "" {
+	logDirectory = "./logs"
+}
+
 
 	logFileMaxAgeStr := os.Getenv("LOG_FILE_MAX_AGE")
 	logFileMaxAge, err := strconv.Atoi(logFileMaxAgeStr)
