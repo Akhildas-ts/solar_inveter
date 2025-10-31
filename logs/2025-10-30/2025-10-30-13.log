@@ -1,0 +1,6 @@
+2025-10-30 13:18:57.140 [INFO] [STARTUP] [no-uuid-found] | Starting Solar Monitoring System...
+2025-10-30 13:18:57.141 [INFO] [INIT] [no-uuid-found] | Data receiver initialized with influx
+2025-10-30 13:19:35.937 [INFO] [SHUTDOWN] [no-uuid-found] | Shutdown signal received
+2025-10-30 13:19:35.937 [INFO] [SHUTDOWN] [no-uuid-found] | Starting graceful shutdown...
+2025-10-30 13:19:36.438 [INFO] [SHUTDOWN] [no-uuid-found] | Shutdown complete. Total inserted: 0, Failed: 0
+2025-10-30 13:19:36.438 [INFO] [SHUTDOWN] [no-uuid-found] | Server exited gracefully

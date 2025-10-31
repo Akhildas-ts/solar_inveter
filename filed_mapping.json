@@ -1,0 +1,284 @@
+[
+    {
+      "source_id": "current_format",
+      "description": "Your current inverter format with nested 'data' field",
+      "nested_path": "data",
+      "mappings": [
+        {
+          "source_field": "serial_no",
+          "standard_field": "serial_no",
+          "data_type": "string",
+          "default_value": "UNKNOWN",
+          "required": false
+        },
+        {
+          "source_field": "s1_v",
+          "standard_field": "voltage",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        },
+        {
+          "source_field": "total_output_power",
+          "standard_field": "power",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        },
+        {
+          "source_field": "f",
+          "standard_field": "frequency",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        },
+        {
+          "source_field": "today_e",
+          "standard_field": "today_energy",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        },
+        {
+          "source_field": "total_e",
+          "standard_field": "total_energy",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        },
+        {
+          "source_field": "inv_temp",
+          "standard_field": "temperature",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        },
+        {
+          "source_field": "fault_code",
+          "standard_field": "fault_code",
+          "data_type": "int",
+          "default_value": 0,
+          "required": false
+        }
+      ],
+      "created_at": "2025-01-15T10:00:00Z",
+      "updated_at": "2025-01-15T10:00:00Z"
+    },
+    {
+      "source_id": "flat_format",
+      "description": "Flat structure - no nested 'data' object",
+      "nested_path": "",
+      "mappings": [
+        {
+          "source_field": "serial_no",
+          "standard_field": "serial_no",
+          "data_type": "string",
+          "default_value": "UNKNOWN"
+        },
+        {
+          "source_field": "voltage",
+          "standard_field": "voltage",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "power",
+          "standard_field": "power",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "frequency",
+          "standard_field": "frequency",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "today_energy",
+          "standard_field": "today_energy",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "total_energy",
+          "standard_field": "total_energy",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "temperature",
+          "standard_field": "temperature",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "fault_code",
+          "standard_field": "fault_code",
+          "data_type": "int",
+          "default_value": 0
+        }
+      ],
+      "created_at": "2025-01-15T10:00:00Z",
+      "updated_at": "2025-01-15T10:00:00Z"
+    },
+    {
+      "source_id": "mixed_format",
+      "description": "Some fields in 'data', some outside - handles both!",
+      "nested_path": "data",
+      "mappings": [
+        {
+          "source_field": "device_name",
+          "standard_field": "device_name",
+          "data_type": "string",
+          "default_value": "UNKNOWN"
+        },
+        {
+          "source_field": "device_id",
+          "standard_field": "device_id",
+          "data_type": "string",
+          "default_value": "UNKNOWN"
+        },
+        {
+          "source_field": "v_input",
+          "standard_field": "voltage",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "power_output",
+          "standard_field": "power",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "temp",
+          "standard_field": "temperature",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "error",
+          "standard_field": "fault_code",
+          "data_type": "int",
+          "default_value": 0
+        }
+      ],
+      "created_at": "2025-01-15T10:00:00Z",
+      "updated_at": "2025-01-15T10:00:00Z"
+    },
+    {
+      "source_id": "minimal_format",
+      "description": "Device that only sends basic fields - uses defaults for rest",
+      "nested_path": "",
+      "mappings": [
+        {
+          "source_field": "V",
+          "standard_field": "voltage",
+          "data_type": "int",
+          "default_value": 0,
+          "required": true
+        },
+        {
+          "source_field": "P",
+          "standard_field": "power",
+          "data_type": "int",
+          "default_value": 0,
+          "required": true
+        },
+        {
+          "source_field": "T",
+          "standard_field": "temperature",
+          "data_type": "int",
+          "default_value": 25
+        },
+        {
+          "source_field": "E",
+          "standard_field": "fault_code",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "serial",
+          "standard_field": "serial_no",
+          "data_type": "string",
+          "default_value": "NO_SERIAL"
+        },
+        {
+          "source_field": "freq",
+          "standard_field": "frequency",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "today",
+          "standard_field": "today_energy",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "total",
+          "standard_field": "total_energy",
+          "data_type": "int",
+          "default_value": 0
+        }
+      ],
+      "created_at": "2025-01-15T10:00:00Z",
+      "updated_at": "2025-01-15T10:00:00Z"
+    },
+    {
+      "source_id": "unit_conversion_format",
+      "description": "Device sends data in different units - auto-converts",
+      "nested_path": "readings",
+      "mappings": [
+        {
+          "source_field": "voltage_mv",
+          "standard_field": "voltage",
+          "data_type": "int",
+          "transform": "divide:10",
+          "default_value": 0
+        },
+        {
+          "source_field": "power_kw",
+          "standard_field": "power",
+          "data_type": "float",
+          "transform": "multiply:1000",
+          "default_value": 0
+        },
+        {
+          "source_field": "temp_fahrenheit",
+          "standard_field": "temperature",
+          "data_type": "int",
+          "transform": "subtract:32",
+          "default_value": 0
+        },
+        {
+          "source_field": "frequency_hz",
+          "standard_field": "frequency",
+          "data_type": "int",
+          "default_value": 0
+        },
+        {
+          "source_field": "today_kwh",
+          "standard_field": "today_energy",
+          "data_type": "float",
+          "transform": "multiply:1000",
+          "default_value": 0
+        },
+        {
+          "source_field": "total_kwh",
+          "standard_field": "total_energy",
+          "data_type": "float",
+          "transform": "multiply:1000",
+          "default_value": 0
+        },
+        {
+          "source_field": "status",
+          "standard_field": "fault_code",
+          "data_type": "int",
+          "default_value": 0
+        }
+      ],
+      "created_at": "2025-01-15T10:00:00Z",
+      "updated_at": "2025-01-15T10:00:00Z"
+    }
+  ]

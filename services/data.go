@@ -14,6 +14,7 @@ import (
 	"solar_project/constants"
 	"solar_project/logger"
 	"solar_project/models"
+	"solar_project/mapper"
 )
 
 var (
@@ -223,4 +224,185 @@ func GetInsertedCount() int64 {
 
 func GetFailedCount() int64 {
 	return atomic.LoadInt64(&failedCount)
+}
+
+// ... (keep all your existing variables and functions)
+
+// ✅ ADD THIS NEW FUNCTION: Flexible handler that uses dynamic mapping
+func FlexibleDataHandler(c *gin.Context) {
+	if isShuttingDown.Load() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server shutting down"})
+		return
+	}
+
+	requestID := uuid.New().String()[:16]
+
+	// Parse raw JSON (accepts any structure)
+	var rawData map[string]interface{}
+	if err := c.ShouldBindJSON(&rawData); err != nil {
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "API",
+			fmt.Sprintf("Bad request: %v", err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get mapper from main package
+	mapper := getMapperFromMain()
+	if mapper == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "mapper not initialized",
+		})
+		return
+	}
+
+	// Extract or detect source_id
+	sourceID := extractSourceID(rawData, mapper)
+	if sourceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":      "could not detect data source",
+			"hint":       "add 'source_id' or 'device_type' field",
+			"request_id": requestID,
+		})
+		return
+	}
+
+	logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "MAPPING",
+		fmt.Sprintf("Using source: %s", sourceID))
+
+	// Apply field mapping
+	standardized, err := mapper.MapFields(sourceID, rawData)
+	if err != nil {
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "MAPPING",
+			fmt.Sprintf("Mapping failed: %v", err))
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":      err.Error(),
+			"source_id":  sourceID,
+			"request_id": requestID,
+		})
+		return
+	}
+
+	// Preserve metadata
+	if deviceName, ok := rawData["device_name"].(string); ok {
+		standardized["device_name"] = deviceName
+	}
+	if deviceID, ok := rawData["device_id"].(string); ok {
+		standardized["device_id"] = deviceID
+	}
+	standardized["device_type"] = sourceID
+
+	// Convert to DB format
+	var record interface{}
+	switch config.GetDBType() {
+	case config.MongoDB:
+		record = convertStandardizedToMongo(standardized)
+	case config.InfluxDB:
+		record = convertStandardizedToInflux(standardized)
+	}
+
+	// Add to buffer
+	bufferMutex.Lock()
+	batchBuffer = append(batchBuffer, record)
+	currentBufferSize := len(batchBuffer)
+	shouldFlush := len(batchBuffer) >= batchSize
+	bufferMutex.Unlock()
+
+	// Update fault stats
+	if faultCode, ok := standardized["fault_code"].(int); ok && faultCode > 0 {
+		updateFaultStats(faultCode)
+	}
+
+	// Flush if needed
+	if shouldFlush {
+		FlushBatch(requestID)
+	}
+
+	// Respond
+	c.JSON(http.StatusOK, gin.H{
+		"status":        "received",
+		"request_id":    requestID,
+		"source_id":     sourceID,
+		"buffer_size":   currentBufferSize,
+		"fields_mapped": len(standardized),
+	})
+}
+
+// ✅ ADD THESE HELPER FUNCTIONS:
+
+// This is a workaround to access main.GetMapper() without circular imports
+var mapperGetter func() interface{}
+
+func SetMapperGetter(getter func() interface{}) {
+	mapperGetter = getter
+}
+
+var globalMapperRef *mapper.FlexibleMapper
+func SetGlobalMapper(m *mapper.FlexibleMapper) {
+	globalMapperRef = m
+}
+func getMapperFromMain() *mapper.FlexibleMapper {
+	return globalMapperRef
+}
+
+func extractSourceID(data map[string]interface{}, m *mapper.FlexibleMapper) string {
+	if sid, ok := data["source_id"].(string); ok {
+		return sid
+	}
+	if dtype, ok := data["device_type"].(string); ok {
+		return dtype
+	}
+	// Auto-detect
+	return m.DetectSourceID(data)
+}
+func convertStandardizedToMongo(data map[string]interface{}) interface{} {
+	return models.InverterData{
+		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
+		DeviceName: getStringOrDefault(data, "device_name", "unknown"),
+		DeviceID:   getStringOrDefault(data, "device_id", "unknown"),
+		Timestamp:  time.Now(),
+		Data: models.InverterDetails{
+			SerialNo:         getStringOrDefault(data, "serial_no", "UNKNOWN"),
+			S1V:              getIntOrDefault(data, "voltage", 0),
+			TotalOutputPower: getIntOrDefault(data, "power", 0),
+			InvTemp:          getIntOrDefault(data, "temperature", 0),
+			FaultCode:        getIntOrDefault(data, "fault_code", 0),
+		},
+	}
+}
+
+func convertStandardizedToInflux(data map[string]interface{}) InverterPayload {
+	return InverterPayload{
+		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
+		DeviceName: getStringOrDefault(data, "device_name", "unknown"),
+		DeviceID:   getStringOrDefault(data, "device_id", "unknown"),
+		Data: models.InverterDetails{
+			SerialNo:         getStringOrDefault(data, "serial_no", "UNKNOWN"),
+			S1V:              getIntOrDefault(data, "voltage", 0),
+			TotalOutputPower: getIntOrDefault(data, "power", 0),
+			InvTemp:          getIntOrDefault(data, "temperature", 0),
+			FaultCode:        getIntOrDefault(data, "fault_code", 0),
+		},
+	}
+}
+
+func getStringOrDefault(data map[string]interface{}, key string, defaultValue string) string {
+	if val, ok := data[key].(string); ok {
+		return val
+	}
+	return defaultValue
+}
+
+func getIntOrDefault(data map[string]interface{}, key string, defaultValue int) int {
+	switch val := data[key].(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case float32:
+		return int(val)
+	default:
+		return defaultValue
+	}
 }

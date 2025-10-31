@@ -14,7 +14,7 @@ import (
 type RouteHandler interface {
 	GetAllData(c *gin.Context)
 	GetStats(c *gin.Context)
-	
+
 	GetDataByFaultCode(c *gin.Context)
 	GetFaultStats(c *gin.Context)
 	GetActiveFaults(c *gin.Context)
@@ -38,7 +38,7 @@ func SetupRoutes(r *gin.Engine) {
 		// Basic routes
 		api.GET("/all", handler.GetAllData)
 		api.GET("/stats", handler.GetStats)
-		api.POST("/data", services.GenerateHandler)
+		api.POST("/data", services.FlexibleDataHandler)
 
 		// Fault detection routes
 		faults := api.Group("/faults")
