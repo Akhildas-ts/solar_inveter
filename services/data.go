@@ -228,7 +228,7 @@ func GetFailedCount() int64 {
 
 // ... (keep all your existing variables and functions)
 
-// ✅ ADD THIS NEW FUNCTION: Flexible handler that uses dynamic mapping
+// Flexible handler that uses dynamic mapping
 func FlexibleDataHandler(c *gin.Context) {
 	if isShuttingDown.Load() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server shutting down"})
@@ -246,7 +246,7 @@ func FlexibleDataHandler(c *gin.Context) {
 		return
 	}
 
-	// Get mapper from main package
+	// Get mapper from main package (latest-map things we will get here)
 	mapper := getMapperFromMain()
 	if mapper == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -255,7 +255,9 @@ func FlexibleDataHandler(c *gin.Context) {
 		return
 	}
 
-	// Extract or detect source_id
+	// Extract or detect source_id (source_id is the id of the data source)
+	//raw-data is the actual data 
+	// mapper is the latest-map things we will get here
 	sourceID := extractSourceID(rawData, mapper)
 	if sourceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -269,7 +271,9 @@ func FlexibleDataHandler(c *gin.Context) {
 	logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "MAPPING",
 		fmt.Sprintf("Using source: %s", sourceID))
 
-	// Apply field mapping
+	// Apply field mapping 
+
+	// data convert to standard format based on the mappings.json file
 	standardized, err := mapper.MapFields(sourceID, rawData)
 	if err != nil {
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "MAPPING",
@@ -327,7 +331,7 @@ func FlexibleDataHandler(c *gin.Context) {
 	})
 }
 
-// ✅ ADD THESE HELPER FUNCTIONS:
+//  HELPER FUNCTIONS:
 
 // This is a workaround to access main.GetMapper() without circular imports
 var mapperGetter func() interface{}
@@ -337,13 +341,20 @@ func SetMapperGetter(getter func() interface{}) {
 }
 
 var globalMapperRef *mapper.FlexibleMapper
+// from main.go we passing the globalMapper to the services package
 func SetGlobalMapper(m *mapper.FlexibleMapper) {
 	globalMapperRef = m
 }
 func getMapperFromMain() *mapper.FlexibleMapper {
 	return globalMapperRef
 }
-
+//rawdata frist parameter 
+//mapper is the latest-map things we will get here
+//if source_id is not found, it will return the device_type
+//if device_type is not found, it will return the source_id
+//if both are not found, it will return the source_id
+//if both are found, it will return the source_id
+//if both are found, it will return the source_id
 func extractSourceID(data map[string]interface{}, m *mapper.FlexibleMapper) string {
 	if sid, ok := data["source_id"].(string); ok {
 		return sid
@@ -351,7 +362,7 @@ func extractSourceID(data map[string]interface{}, m *mapper.FlexibleMapper) stri
 	if dtype, ok := data["device_type"].(string); ok {
 		return dtype
 	}
-	// Auto-detect
+	// Auto-detect source_Id based
 	return m.DetectSourceID(data)
 }
 func convertStandardizedToMongo(data map[string]interface{}) interface{} {

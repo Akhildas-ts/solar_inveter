@@ -21,7 +21,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// ✅ ADD THIS: Global mapper variable
+// : Global mapper variable 
 var globalMapper *mapper.FlexibleMapper
 
 func main() {
@@ -42,9 +42,9 @@ func main() {
 	}
 	defer config.CloseDB()
 
-	// ✅ ADD THIS: Initialize flexible mapper
+	//Initialize flexible mapper.json
 	globalMapper = mapper.NewFlexibleMapper("./field_mappings.json", true)
-	services.SetGlobalMapper(globalMapper) // ✅ PUT IT HERE
+	services.SetGlobalMapper(globalMapper) // PUT IT HERE
 	logger.WriteLog("INFO", "", "MAPPER", "Flexible field mapper initialized")
 
 	// Initialize data generator service
@@ -62,7 +62,7 @@ func main() {
 	r.Static("/static", "./static")
 	r.StaticFile("/", "./static/index.html")
 
-	// ✅ ADD THIS: Setup mapping management routes
+//addedd mapping routes 
 	setupMappingRoutes(r)
 
 	// Setup API routes (your existing routes)

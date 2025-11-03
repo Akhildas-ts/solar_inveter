@@ -62,12 +62,15 @@ type DataSourceMapping struct {
 
 // FlexibleMapper handles any JSON structure with hot-reload capability
 type FlexibleMapper struct {
-	mu              sync.RWMutex
-	mappings        map[string]*DataSourceMapping
-	configPath      string
-	autoReloadWatch bool
-	lastReload      time.Time
+	mu              sync.RWMutex // makes it safe to use from multiple goroutines (thread-safe)
+	mappings        map[string]*DataSourceMapping //a map that holds all the source mappings
+	configPath      string // file path of where the mappings are stored ( JSON config)
+	autoReloadWatch bool // if true, it automatically reloads mapping when the config changes 
+	lastReload      time.Time //remembers when it last reloaded
 }
+
+//autoreload match - Sometimes you might update your mappings.json (for example, add a new data source).
+// You don’t want to restart the app every time you edit it.
 
 // NewFlexibleMapper creates a new mapper instance
 func NewFlexibleMapper(configPath string, autoReload bool) *FlexibleMapper {
@@ -390,13 +393,16 @@ func (fm *FlexibleMapper) saveMappingsToFile() error {
 }
 
 // DetectSourceID attempts to identify data source from raw JSON
+// actually its checking best matching source_id based on the mappings.json file 
 func (fm *FlexibleMapper) DetectSourceID(rawData map[string]interface{}) string {
 	fm.mu.RLock()
+	// lock the mappings 
 	defer fm.mu.RUnlock()
 
 	bestMatch := ""
 	bestScore := 0
 
+	// loop through all the mappings
 	for sourceID, mapping := range fm.mappings {
 		score := 0
 		

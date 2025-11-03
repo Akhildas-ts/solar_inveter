@@ -1,6 +1,6 @@
 [
   {
-    "source_id": "format_2_inverter",
+    "source_id": "ESMAP01",
     "description": "Different field names - nested data",
     "nested_path": "data",
     "mappings": [
@@ -9,7 +9,8 @@
         "standard_field": "serial_no",
         "data_type": "string",
         "default_value": "UNKNOWN",
-        "transform": "",
+        "transform": "", 
+        
         "required": false
       },
       {
