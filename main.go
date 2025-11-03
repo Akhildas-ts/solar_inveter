@@ -13,7 +13,6 @@ import (
 
 	"solar_project/config"
 	"solar_project/logger"
-	"solar_project/mapper" // ✅ ADD THIS LINE
 	"solar_project/routes"
 	"solar_project/services"
 
@@ -21,12 +20,11 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// : Global mapper variable 
-var globalMapper *mapper.FlexibleMapper
+// Global mapping service variable
+var globalMappingService *services.MongoMappingService
 
 func main() {
-	// Load environment variables from .env file
-
+	// Load environment variables
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: .env file not found, using system environment variables")
 	}
@@ -42,10 +40,17 @@ func main() {
 	}
 	defer config.CloseDB()
 
-	//Initialize flexible mapper.json
-	globalMapper = mapper.NewFlexibleMapper("./field_mappings.json", true)
-	services.SetGlobalMapper(globalMapper) // PUT IT HERE
-	logger.WriteLog("INFO", "", "MAPPER", "Flexible field mapper initialized")
+	// ✅ NEW: Initialize MongoDB-backed mapping service (replaces JSON file)
+	var err error
+	globalMappingService, err = services.NewMongoMappingService(true) // true = auto-reload enabled
+	if err != nil {
+		log.Fatal("Failed to initialize mapping service:", err)
+	}
+	defer globalMappingService.Close()
+
+	// Set the global mapper for services package
+	services.SetGlobalMappingService(globalMappingService)
+	logger.WriteLog("INFO", "", "MAPPER", "MongoDB-backed mapping service initialized")
 
 	// Initialize data generator service
 	services.InitGenerator()
@@ -62,11 +67,11 @@ func main() {
 	r.Static("/static", "./static")
 	r.StaticFile("/", "./static/index.html")
 
-//addedd mapping routes 
-	setupMappingRoutes(r)
-
-	// Setup API routes (your existing routes)
+	// Setup API routes
 	routes.SetupRoutes(r)
+	
+	// ✅ NEW: Setup mapping management routes
+	routes.SetupMappingRoutes(r, globalMappingService)
 
 	// Print startup information
 	printStartupInfo()
@@ -106,173 +111,6 @@ func main() {
 	logger.WriteLog("INFO", "", "SHUTDOWN", "Server exited gracefully")
 }
 
-// ✅ ADD THIS ENTIRE FUNCTION: Mapping management API routes
-func setupMappingRoutes(r *gin.Engine) {
-	api := r.Group("/api/mappings")
-	{
-		api.GET("", getAllMappings)
-		api.GET("/:source_id", getMapping)
-		api.POST("", createMapping)
-		api.PUT("/:source_id", updateMapping)
-		api.DELETE("/:source_id", deleteMapping)
-		api.POST("/reload", reloadMappings)
-		api.POST("/test", testMapping)
-	}
-}
-
-// ✅ ADD THESE HANDLER FUNCTIONS:
-
-func getAllMappings(c *gin.Context) {
-	mappings := globalMapper.GetAllMappings()
-	c.JSON(http.StatusOK, gin.H{
-		"count":    len(mappings),
-		"mappings": mappings,
-	})
-}
-
-func getMapping(c *gin.Context) {
-	sourceID := c.Param("source_id")
-	mappings := globalMapper.GetAllMappings()
-
-	mapping, exists := mappings[sourceID]
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "mapping not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, mapping)
-}
-
-func createMapping(c *gin.Context) {
-	var mapping mapper.DataSourceMapping
-	if err := c.ShouldBindJSON(&mapping); err != nil {
-
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid request body",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	if mapping.SourceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "source_id is required"})
-		return
-	}
-
-	mapping.CreatedAt = time.Now()
-	mapping.UpdatedAt = time.Now()
-
-	if err := globalMapper.AddMapping(&mapping); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to add mapping",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"status":  "created",
-		"mapping": mapping,
-	})
-}
-
-func updateMapping(c *gin.Context) {
-	sourceID := c.Param("source_id")
-
-	var mapping mapper.DataSourceMapping
-	if err := c.ShouldBindJSON(&mapping); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid request body",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	mapping.SourceID = sourceID
-
-	if err := globalMapper.UpdateMapping(sourceID, &mapping); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "updated",
-		"mapping": mapping,
-	})
-}
-
-func deleteMapping(c *gin.Context) {
-	sourceID := c.Param("source_id")
-
-	if err := globalMapper.DeleteMapping(sourceID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to delete mapping",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "deleted",
-		"source_id": sourceID,
-	})
-}
-
-func reloadMappings(c *gin.Context) {
-	if err := globalMapper.LoadMappings(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to reload mappings",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "reloaded",
-		"timestamp": time.Now(),
-	})
-}
-
-func testMapping(c *gin.Context) {
-	var request struct {
-		SourceID string                 `json:"source_id"`
-		RawData  map[string]interface{} `json:"raw_data"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-
-	if request.SourceID == "" {
-		request.SourceID = globalMapper.DetectSourceID(request.RawData)
-		if request.SourceID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "could not detect source_id from data",
-				"hint":  "provide source_id explicitly",
-			})
-			return
-		}
-	}
-
-	standardized, err := globalMapper.MapFields(request.SourceID, request.RawData)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"detected_source":   request.SourceID,
-		"original_data":     request.RawData,
-		"standardized_data": standardized,
-	})
-}
-
-// ✅ ADD THIS: Helper function to get mapper
-func GetMapper() *mapper.FlexibleMapper {
-	return globalMapper
-}
-
 func printStartupInfo() {
 	dbType := config.GetDBType()
 
@@ -289,10 +127,25 @@ func printStartupInfo() {
 	fmt.Println("   /api/faults/stats    - Fault statistics")
 	fmt.Println("   /api/faults/active   - Active faults only")
 	fmt.Println("   /api/faults/latest   - Latest 50 faults")
-	fmt.Println("\n🔄 Dynamic Mapping APIs:") // ✅ ADD THIS
-	fmt.Println("   /api/mappings           - Get all mappings")
-	fmt.Println("   /api/mappings/:id       - Get specific mapping")
-	fmt.Println("   /api/mappings (POST)    - Create new mapping")
-	fmt.Println("   /api/mappings/test      - Test a mapping")
-	fmt.Println("\n💡 Press Ctrl+C to shutdown gracefully\n")
+	
+	// ✅ NEW: MongoDB Mapping APIs
+	fmt.Println("\n🔄 MongoDB Dynamic Mapping APIs:")
+	fmt.Println("   GET    /api/mappings              - Get all mappings")
+	fmt.Println("   GET    /api/mappings/:source_id   - Get specific mapping")
+	fmt.Println("   POST   /api/mappings              - Create new mapping")
+	fmt.Println("   PUT    /api/mappings/:source_id   - Update mapping")
+	fmt.Println("   DELETE /api/mappings/:source_id   - Delete mapping")
+	fmt.Println("   POST   /api/mappings/reload       - Manually reload mappings")
+	fmt.Println("   POST   /api/mappings/test         - Test mapping with data")
+	fmt.Println("   GET    /api/mappings/detect       - Auto-detect source")
+	fmt.Println("   GET    /api/mappings/:id/history  - View change history")
+	fmt.Println("   GET    /api/mappings/:id/stats    - View usage statistics")
+	
+	fmt.Println("\n💡 Press Ctrl+C to shutdown gracefully")
+	fmt.Println("\n✨ Features:")
+	fmt.Println("   • Auto-reload mappings on change (MongoDB Change Streams)")
+	fmt.Println("   • Change history tracking")
+	fmt.Println("   • Usage statistics")
+	fmt.Println("   • No restart required for mapping updates")
+	fmt.Println()
 }
