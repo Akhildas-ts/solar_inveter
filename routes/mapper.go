@@ -298,8 +298,6 @@ func (h *MappingRoutes) DetectSourceID(c *gin.Context) {
 func (h *MappingRoutes) GetMappingHistory(c *gin.Context) {
 	sourceID := c.Param("source_id")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	// This would need the historyCol from the service
 	// For now, return placeholder

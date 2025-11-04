@@ -66,7 +66,8 @@ type FlexibleMapper struct {
 	mappings        map[string]*DataSourceMapping //a map that holds all the source mappings
 	configPath      string // file path of where the mappings are stored ( JSON config)
 	autoReloadWatch bool // if true, it automatically reloads mapping when the config changes 
-	lastReload      time.Time //remembers when it last reloaded
+	lastReload      time.Time //remembers when it last reloaded (time.Now()) 
+	
 }
 
 //autoreload match - Sometimes you might update your mappings.json (for example, add a new data source).
@@ -141,6 +142,9 @@ func (fm *FlexibleMapper) watchConfigFile() {
 		}
 	}
 }
+
+
+// s
 
 // MapFields transforms raw JSON data to standardized format
 // Handles nested objects, flat structures, missing fields, etc.

@@ -39,7 +39,7 @@ func NewMongoMappingService(autoReload bool) (*MongoMappingService, error) {
 		return nil, fmt.Errorf("MongoDB client not initialized")
 	}
 
-	dbName := getEnv("MONGO_DATABASE", "solar_monitoring")
+	dbName := getEnv("DB_NAME", "solar_monitoring")
 	
 	ctx := context.Background()
 	watchCtx, watchCancel := context.WithCancel(ctx)
