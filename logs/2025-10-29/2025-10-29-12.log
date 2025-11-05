@@ -1,4 +1,0 @@
-2025-10-29 12:48:52.672 [INFO] [SHUTDOWN] [no-uuid-found] | Shutdown signal received
-2025-10-29 12:48:52.678 [INFO] [SHUTDOWN] [no-uuid-found] | Starting graceful shutdown...
-2025-10-29 12:48:53.181 [INFO] [SHUTDOWN] [no-uuid-found] | Shutdown complete. Total inserted: 6000, Failed: 0
-2025-10-29 12:48:53.182 [INFO] [SHUTDOWN] [no-uuid-found] | Server exited gracefully

@@ -186,7 +186,7 @@ func (h *MappingRoutes) DeleteMapping(c *gin.Context) {
 
 // ReloadMappings manually reloads all mappings from database
 func (h *MappingRoutes) ReloadMappings(c *gin.Context) {
-	if err := h.service.LoadMappingsFromDB(); err != nil {
+	if err := h.service.LoadFromDB(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "failed to reload mappings",
