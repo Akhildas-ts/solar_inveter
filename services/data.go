@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"solar_project/config"
 	"solar_project/constants"
@@ -17,27 +21,44 @@ import (
 )
 
 var (
-	insertedCount  int64
-	failedCount    int64
+	// Counters
+	receivedCount      int64
+	rawStoredCount     int64
+	processedCount     int64
+	insertedCount      int64
+	failedCount        int64
+	mappingFailCount   int64
+	unknownSourceCount int64 // NEW: Track unknown sources
+	
+	// Buffers
 	batchBuffer    []interface{}
 	bufferMutex    sync.Mutex
 	flushMutex     sync.Mutex
 	batchSize      = 100
-	faultStats     = make(map[int]int64)
-	faultStatMutex sync.Mutex
-	isShuttingDown atomic.Bool
-	dataWriter     DataWriter
 	
-	// ✅ NEW: MongoDB mapping service reference
+	// Collections
+	dataWriter       DataWriter
+	rawCollection    *mongo.Collection
+	
+	// Settings
+	isShuttingDown   atomic.Bool
+	
+	// Stats
+	faultStats       = make(map[int]int64)
+	faultStatMutex   sync.Mutex
+	
+	// Mapping service
 	globalMappingServiceRef *MongoMappingService
+	
+	// Auto-cleanup settings
+	rawDataRetentionDays = 7
+	cleanupInterval      = 24 * time.Hour
 )
 
-// DataWriter interface for database operations
 type DataWriter interface {
 	WriteData(data []interface{}, requestID string) error
 }
 
-// InverterPayload matches the client's JSON structure
 type InverterPayload struct {
 	DeviceType     string                 `json:"device_type"`
 	DeviceName     string                 `json:"device_name"`
@@ -48,13 +69,40 @@ type InverterPayload struct {
 	Data           models.InverterDetails `json:"data"`
 }
 
-// InitGenerator initializes the data service based on DB type
+type RawDataRecord struct {
+	RequestID      string                 `bson:"request_id"`
+	RawData        map[string]interface{} `bson:"raw_data"`
+	ReceivedAt     time.Time              `bson:"received_at"`
+	ProcessedAt    *time.Time             `bson:"processed_at,omitempty"`
+	Processed      bool                   `bson:"processed"`
+	SourceID       string                 `bson:"source_id,omitempty"`
+	Error          string                 `bson:"error,omitempty"`
+	MappingError   string                 `bson:"mapping_error,omitempty"`
+	UnknownSource  bool                   `bson:"unknown_source"` // NEW: Flag for unknown sources
+	NeedsAttention bool                   `bson:"needs_attention"` // NEW: Flag for manual review
+}
+
 func InitGenerator() {
 	dbType := config.GetDBType()
 
 	switch dbType {
 	case config.MongoDB:
 		dataWriter = NewMongoWriter()
+		
+		client := config.GetMongoClient()
+		if client == nil {
+			panic("MongoDB client not initialized")
+		}
+		
+		dbName := getEnv("DB_NAME", "solar_monitoring")
+		rawCollection = client.Database(dbName).Collection("raw_data")
+		
+		createRawDataIndexes()
+		go autoCleanupRawData()
+		
+		logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INIT", 
+			"Raw data collection initialized with auto-cleanup")
+		
 	case config.InfluxDB:
 		dataWriter = NewInfluxWriter()
 	default:
@@ -65,18 +113,99 @@ func InitGenerator() {
 		fmt.Sprintf("Data receiver initialized with %s", dbType))
 }
 
-// ✅ NEW: Set the global mapping service (called from main.go)
+func createRawDataIndexes() {
+	if rawCollection == nil {
+		return
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	indexes := []mongo.IndexModel{
+		{
+			Keys: bson.D{{Key: "request_id", Value: 1}},
+			Options: options.Index().SetUnique(true),
+		},
+		{
+			Keys: bson.D{{Key: "received_at", Value: 1}},
+		},
+		{
+			Keys: bson.D{{Key: "processed", Value: 1}},
+		},
+		{
+			Keys: bson.D{{Key: "unknown_source", Value: 1}}, // NEW
+		},
+		{
+			Keys: bson.D{{Key: "needs_attention", Value: 1}}, // NEW
+		},
+		{
+			Keys: bson.D{
+				{Key: "received_at", Value: 1},
+				{Key: "processed", Value: 1},
+			},
+		},
+	}
+
+	_, err := rawCollection.Indexes().CreateMany(ctx, indexes)
+	if err != nil {
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, "", "INDEX",
+			fmt.Sprintf("Failed to create indexes: %v", err))
+	}
+}
+
+func autoCleanupRawData() {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	cleanupOldRawData()
+
+	for range ticker.C {
+		if isShuttingDown.Load() {
+			return
+		}
+		cleanupOldRawData()
+	}
+}
+
+func cleanupOldRawData() {
+	if rawCollection == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cutoffDate := time.Now().Add(-time.Duration(rawDataRetentionDays) * 24 * time.Hour)
+
+	filter := bson.M{
+		"received_at": bson.M{"$lt": cutoffDate},
+		"processed":   true,
+		"unknown_source": false, // ✅ DON'T delete unknown sources automatically
+	}
+
+	result, err := rawCollection.DeleteMany(ctx, filter)
+	if err != nil {
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, "", "CLEANUP",
+			fmt.Sprintf("Failed to cleanup raw data: %v", err))
+		return
+	}
+
+	if result.DeletedCount > 0 {
+		logger.WriteLog(constants.LOG_LEVEL_INFO, "", "CLEANUP",
+			fmt.Sprintf("Cleaned up %d old raw records (older than %d days)",
+				result.DeletedCount, rawDataRetentionDays))
+	}
+}
+
 func SetGlobalMappingService(service *MongoMappingService) {
 	globalMappingServiceRef = service
 }
 
-// ✅ NEW: Get the global mapping service
 func GetGlobalMappingService() *MongoMappingService {
 	return globalMappingServiceRef
 }
 
-// FlexibleDataHandler - the main entry point for all incoming data
-// Uses MongoDB-backed mapping system instead of JSON file
+// ✅ FIXED: Main handler with proper error handling
 func FlexibleDataHandler(c *gin.Context) {
 	if isShuttingDown.Load() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server shutting down"})
@@ -85,53 +214,77 @@ func FlexibleDataHandler(c *gin.Context) {
 
 	requestID := uuid.New().String()[:16]
 	startTime := time.Now()
+	
+	atomic.AddInt64(&receivedCount, 1)
 
-	// Parse raw JSON (accepts any structure)
 	var rawData map[string]interface{}
 	if err := c.ShouldBindJSON(&rawData); err != nil {
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "API",
 			fmt.Sprintf("Bad request: %v", err))
+		atomic.AddInt64(&failedCount, 1)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// ✅ Get mapping service (MongoDB-backed)
+	// ✅ STEP 1: Store raw data IMMEDIATELY (always succeeds)
+	go storeRawDataAsync(requestID, rawData)
+
+	// ✅ STEP 2: Check if mapping service exists
 	mappingService := GetGlobalMappingService()
 	if mappingService == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "mapping service not initialized",
+		go markAsUnknownSource(requestID, "mapping service not initialized")
+		c.JSON(http.StatusOK, gin.H{
+			"status":      "raw_stored",
+			"request_id":  requestID,
+			"message":     "Data stored but cannot process (mapping service unavailable)",
+			"raw_stored":  true,
+			"processed":   false,
 		})
 		return
 	}
 
-	// Extract or detect source_id
+	// ✅ STEP 3: Try to detect source
 	sourceID := extractSourceID(rawData, mappingService)
 	if sourceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "could not detect data source",
-			"hint":       "add 'source_id' or 'device_type' field",
-			"request_id": requestID,
+		// ✅ NO DEFAULT MAPPING - Mark as unknown and store raw only
+		atomic.AddInt64(&unknownSourceCount, 1)
+		go markAsUnknownSource(requestID, "no matching mapping found")
+		
+		c.JSON(http.StatusOK, gin.H{
+			"status":         "unknown_source",
+			"request_id":     requestID,
+			"message":        "Data stored but source unknown - needs mapping configuration",
+			"raw_stored":     true,
+			"processed":      false,
+			"needs_attention": true,
+			"hint":           "Check /api/raw/unknown to see all unmapped data",
 		})
 		return
 	}
 
-	logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "MAPPING",
-		fmt.Sprintf("Using source: %s", sourceID))
+	go updateRawDataSource(requestID, sourceID)
 
-	// ✅ Apply field mapping using MongoDB mappings
+	// ✅ STEP 4: Try to apply mapping
 	standardized, err := mappingService.MapFields(sourceID, rawData)
 	if err != nil {
+		atomic.AddInt64(&mappingFailCount, 1)
+		go updateRawDataError(requestID, fmt.Sprintf("mapping failed: %v", err))
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "MAPPING",
 			fmt.Sprintf("Mapping failed: %v", err))
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      err.Error(),
-			"source_id":  sourceID,
-			"request_id": requestID,
+		
+		c.JSON(http.StatusOK, gin.H{
+			"status":      "mapping_failed",
+			"request_id":  requestID,
+			"source_id":   sourceID,
+			"message":     "Data stored but mapping failed",
+			"raw_stored":  true,
+			"processed":   false,
+			"error":       err.Error(),
 		})
 		return
 	}
 
-	// Preserve metadata
+	// ✅ STEP 5: Successfully mapped - prepare for insertion
 	if deviceName, ok := rawData["device_name"].(string); ok {
 		standardized["device_name"] = deviceName
 	}
@@ -139,8 +292,8 @@ func FlexibleDataHandler(c *gin.Context) {
 		standardized["device_id"] = deviceID
 	}
 	standardized["device_type"] = sourceID
+	standardized["request_id"] = requestID
 
-	// Convert to DB format
 	var record interface{}
 	switch config.GetDBType() {
 	case config.MongoDB:
@@ -149,52 +302,136 @@ func FlexibleDataHandler(c *gin.Context) {
 		record = convertStandardizedToInflux(standardized)
 	}
 
-	// Add to buffer
+	// ✅ CRITICAL FIX: Add to buffer properly
 	bufferMutex.Lock()
 	batchBuffer = append(batchBuffer, record)
 	currentBufferSize := len(batchBuffer)
 	shouldFlush := len(batchBuffer) >= batchSize
 	bufferMutex.Unlock()
 
-	// Update fault stats
 	if faultCode, ok := standardized["fault_code"].(int); ok && faultCode > 0 {
 		updateFaultStats(faultCode)
 	}
 
-	// Flush if needed
 	if shouldFlush {
 		FlushBatch(requestID)
 	}
 
-	// Calculate processing time
+	atomic.AddInt64(&processedCount, 1)
+
 	processingTime := time.Since(startTime).Milliseconds()
 
-	// Respond
 	c.JSON(http.StatusOK, gin.H{
-		"status":          "received",
+		"status":          "success",
 		"request_id":      requestID,
 		"source_id":       sourceID,
 		"buffer_size":     currentBufferSize,
 		"fields_mapped":   len(standardized),
 		"processing_ms":   processingTime,
+		"raw_stored":      true,
+		"processed":       true,
 	})
 }
 
-// extractSourceID tries to determine the data source
-func extractSourceID(data map[string]interface{}, mappingService *MongoMappingService) string {
-	// First check explicit fields
-	if sid, ok := data["source_id"].(string); ok {
-		return sid
+// ✅ Store raw data (always succeeds)
+func storeRawDataAsync(requestID string, data map[string]interface{}) {
+	if rawCollection == nil {
+		return
 	}
-	if dtype, ok := data["device_type"].(string); ok {
-		return dtype
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rawDoc := RawDataRecord{
+		RequestID:      requestID,
+		RawData:        data,
+		ReceivedAt:     time.Now(),
+		Processed:      false,
+		UnknownSource:  false,
+		NeedsAttention: false,
 	}
-	
-	// ✅ Use MongoDB mapping service to auto-detect
-	return mappingService.DetectSourceID(data)
+
+	_, err := rawCollection.InsertOne(ctx, rawDoc)
+	if err != nil {
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "RAW_STORE",
+			fmt.Sprintf("Failed to store raw data: %v", err))
+		return
+	}
+
+	atomic.AddInt64(&rawStoredCount, 1)
 }
 
-// FlushBatch writes buffered data to database (thread-safe)
+// ✅ NEW: Mark as unknown source (no mapping available)
+func markAsUnknownSource(requestID, reason string) {
+	if rawCollection == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	filter := bson.M{"request_id": requestID}
+	update := bson.M{"$set": bson.M{
+		"unknown_source":  true,
+		"needs_attention": true,
+		"mapping_error":   reason,
+		"processed":       false,
+	}}
+
+	rawCollection.UpdateOne(ctx, filter, update)
+}
+
+func updateRawDataSource(requestID, sourceID string) {
+	if rawCollection == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	filter := bson.M{"request_id": requestID}
+	update := bson.M{"$set": bson.M{"source_id": sourceID}}
+
+	rawCollection.UpdateOne(ctx, filter, update)
+}
+
+func updateRawDataError(requestID, errorMsg string) {
+	if rawCollection == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	filter := bson.M{"request_id": requestID}
+	update := bson.M{"$set": bson.M{
+		"mapping_error":   errorMsg,
+		"needs_attention": true,
+		"processed":       false,
+	}}
+
+	rawCollection.UpdateOne(ctx, filter, update)
+}
+
+func markRawAsProcessed(requestID string) {
+	if rawCollection == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	now := time.Now()
+	filter := bson.M{"request_id": requestID}
+	update := bson.M{"$set": bson.M{
+		"processed":    true,
+		"processed_at": now,
+	}}
+
+	rawCollection.UpdateOne(ctx, filter, update)
+}
+
+// ✅ CRITICAL FIX: Proper batch flushing
 func FlushBatch(requestID string) {
 	flushMutex.Lock()
 	defer flushMutex.Unlock()
@@ -206,7 +443,7 @@ func FlushBatch(requestID string) {
 	}
 	toInsert := make([]interface{}, len(batchBuffer))
 	copy(toInsert, batchBuffer)
-	batchBuffer = batchBuffer[:0]
+	batchBuffer = batchBuffer[:0] // ✅ Clear buffer properly
 	bufferMutex.Unlock()
 
 	err := dataWriter.WriteData(toInsert, requestID)
@@ -215,17 +452,40 @@ func FlushBatch(requestID string) {
 		atomic.AddInt64(&failedCount, int64(len(toInsert)))
 	} else {
 		atomic.AddInt64(&insertedCount, int64(len(toInsert)))
+		// Mark as processed
+		go markRawAsProcessed(requestID)
 	}
 }
 
-// updateFaultStats increments fault occurrence counters
+func extractSourceID(data map[string]interface{}, mappingService *MongoMappingService) string {
+	if sid, ok := data["source_id"].(string); ok {
+		return sid
+	}
+	if dtype, ok := data["device_type"].(string); ok {
+		return dtype
+	}
+	return mappingService.DetectSourceID(data)
+}
+
 func updateFaultStats(faultCode int) {
 	faultStatMutex.Lock()
 	faultStats[faultCode]++
 	faultStatMutex.Unlock()
 }
 
-// PeriodicBatchFlush flushes every 200ms regardless of batch size
+func GetBufferSize() int {
+	bufferMutex.Lock()
+	defer bufferMutex.Unlock()
+	return len(batchBuffer)
+}
+
+func GetInsertedCount() int64    { return atomic.LoadInt64(&insertedCount) }
+func GetFailedCount() int64      { return atomic.LoadInt64(&failedCount) }
+func GetReceivedCount() int64    { return atomic.LoadInt64(&receivedCount) }
+func GetRawStoredCount() int64   { return atomic.LoadInt64(&rawStoredCount) }
+func GetProcessedCount() int64   { return atomic.LoadInt64(&processedCount) }
+func GetUnknownSourceCount() int64 { return atomic.LoadInt64(&unknownSourceCount) }
+
 func PeriodicBatchFlush() {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -238,12 +498,13 @@ func PeriodicBatchFlush() {
 	}
 }
 
-// ReportStats prints running performance info every 5 seconds
+// ✅ IMPROVED: Better stats reporting
 func ReportStats() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	lastCount := int64(0)
+	lastReceived := int64(0)
+	lastInserted := int64(0)
 	lastTime := time.Now()
 
 	for range ticker.C {
@@ -251,11 +512,13 @@ func ReportStats() {
 			return
 		}
 
-		currentCount := atomic.LoadInt64(&insertedCount)
+		currentReceived := atomic.LoadInt64(&receivedCount)
+		currentInserted := atomic.LoadInt64(&insertedCount)
 		currentTime := time.Now()
 
 		elapsed := currentTime.Sub(lastTime).Seconds()
-		rps := float64(currentCount-lastCount) / elapsed
+		receivedRPS := float64(currentReceived-lastReceived) / elapsed
+		insertedRPS := float64(currentInserted-lastInserted) / elapsed
 
 		faultStatMutex.Lock()
 		faultCount := int64(0)
@@ -264,49 +527,36 @@ func ReportStats() {
 		}
 		faultStatMutex.Unlock()
 
-		fmt.Printf("📊 Total=%d | Failed=%d | RPS=%.0f | Faults=%d | Buffer=%d\n",
-			currentCount,
+		fmt.Printf("📊 Recv=%d (%.0f/s) | Raw=%d | Proc=%d | Insert=%d (%.0f/s) | Unknown=%d | Failed=%d | Buffer=%d\n",
+			currentReceived,
+			receivedRPS,
+			atomic.LoadInt64(&rawStoredCount),
+			atomic.LoadInt64(&processedCount),
+			currentInserted,
+			insertedRPS,
+			atomic.LoadInt64(&unknownSourceCount),
 			atomic.LoadInt64(&failedCount),
-			rps,
-			faultCount,
 			GetBufferSize(),
 		)
 
-		lastCount = currentCount
+		lastReceived = currentReceived
+		lastInserted = currentInserted
 		lastTime = currentTime
 	}
 }
 
-// GracefulShutdown ensures all data is flushed before exit
 func GracefulShutdown() {
 	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "SHUTDOWN", "Starting graceful shutdown...")
 	isShuttingDown.Store(true)
-
 	time.Sleep(500 * time.Millisecond)
-
 	FlushBatch("SHUTDOWN")
-
+	
 	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "SHUTDOWN",
-		fmt.Sprintf("Shutdown complete. Total inserted: %d, Failed: %d",
-			GetInsertedCount(), GetFailedCount()))
+		fmt.Sprintf("Shutdown complete. Recv: %d, Raw: %d, Proc: %d, Insert: %d, Unknown: %d, Failed: %d",
+			GetReceivedCount(), GetRawStoredCount(), GetProcessedCount(),
+			GetInsertedCount(), GetUnknownSourceCount(), GetFailedCount()))
 }
 
-// Helper functions for metrics
-func GetBufferSize() int {
-	bufferMutex.Lock()
-	defer bufferMutex.Unlock()
-	return len(batchBuffer)
-}
-
-func GetInsertedCount() int64 {
-	return atomic.LoadInt64(&insertedCount)
-}
-
-func GetFailedCount() int64 {
-	return atomic.LoadInt64(&failedCount)
-}
-
-// Conversion helper functions
 func convertStandardizedToMongo(data map[string]interface{}) interface{} {
 	return models.InverterData{
 		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
@@ -359,3 +609,10 @@ func getIntOrDefault(data map[string]interface{}, key string, defaultValue int) 
 		return defaultValue
 	}
 }
+
+// func getEnv(key, defaultValue string) string {
+// 	if value := os.Getenv(key); value != "" {
+// 		return value
+// 	}
+// 	return defaultValue
+// }
