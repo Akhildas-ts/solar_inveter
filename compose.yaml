@@ -1,0 +1,24 @@
+services:
+  influxdb3:
+    image: influxdb:3-core
+    container_name: solar_influxdb3
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb3-data:/var/lib/influxdb3
+    command:
+      - serve
+      - --node-id
+      - solar-node-01
+      - --object-store
+      - file
+      - --data-dir
+      - /var/lib/influxdb3
+      - --http-bind
+      - 0.0.0.0:8086
+      - --without-auth
+    restart: unless-stopped
+
+
+volumes:
+  influxdb3-data:  # ← This was missing!

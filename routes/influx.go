@@ -14,13 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// InfluxHandler handles InfluxDB-specific routes
+// InfluxHandler handles LOCAL InfluxDB v3-specific routes
 type InfluxHandler struct {
 	client   interface{}
 	database string
 }
 
-// NewInfluxHandler creates a new InfluxDB route handler
+// NewInfluxHandler creates a new LOCAL InfluxDB v3 route handler
 func NewInfluxHandler() *InfluxHandler {
 	return &InfluxHandler{
 		client:   config.GetInfluxClient(),
@@ -28,16 +28,16 @@ func NewInfluxHandler() *InfluxHandler {
 	}
 }
 
-// GetStats returns insertion statistics from InfluxDB
+// GetStats returns insertion statistics from LOCAL InfluxDB v3
 func (h *InfluxHandler) GetStats(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client := config.GetInfluxClient()
 
-	// Query total count
+	// ✅ InfluxDB v3 uses SQL queries!
 	totalQuery := fmt.Sprintf(`
-		SELECT COUNT(voltage) 
+		SELECT COUNT(*) as count
 		FROM inverter_data
 	`)
 
@@ -53,9 +53,9 @@ func (h *InfluxHandler) GetStats(c *gin.Context) {
 		}
 	}
 
-	// Query fault count
+	// ✅ Query fault count with SQL
 	faultQuery := fmt.Sprintf(`
-		SELECT COUNT(voltage) 
+		SELECT COUNT(*) as count
 		FROM inverter_data 
 		WHERE fault_code > 0
 	`)
@@ -75,8 +75,9 @@ func (h *InfluxHandler) GetStats(c *gin.Context) {
 	normalCount := totalCount - faultCount
 
 	c.JSON(http.StatusOK, gin.H{
-		"database":       "InfluxDB",
-		"db_name":        h.database, // ✅ NOW USING database variable
+		"database":       "InfluxDB v3 (Local)",
+		"db_name":        h.database,
+		"mode":           "LOCAL DOCKER",
 		"total_records":  totalCount,
 		"normal_records": normalCount,
 		"fault_records":  faultCount,
@@ -87,7 +88,7 @@ func (h *InfluxHandler) GetStats(c *gin.Context) {
 	})
 }
 
-// GetAllData returns recent records from InfluxDB
+// GetAllData returns recent records from LOCAL InfluxDB v3
 func (h *InfluxHandler) GetAllData(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -95,7 +96,8 @@ func (h *InfluxHandler) GetAllData(c *gin.Context) {
 	limit := getIntParam(c, "limit", 100)
 
 	client := config.GetInfluxClient()
-	// ✅ NOW USING database variable in query context
+	
+	// ✅ InfluxDB v3 SQL query
 	query := fmt.Sprintf(`
 		SELECT *
 		FROM inverter_data
@@ -108,6 +110,7 @@ func (h *InfluxHandler) GetAllData(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":    "Failed to fetch data",
 			"database": h.database,
+			"detail":   err.Error(),
 		})
 		return
 	}
@@ -118,13 +121,14 @@ func (h *InfluxHandler) GetAllData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"database": h.database, // ✅ USING database variable
+		"database": h.database,
+		"mode":     "LOCAL",
 		"count":    len(results),
 		"data":     results,
 	})
 }
 
-// GetDataByFaultCode returns data filtered by fault code from InfluxDB
+// GetDataByFaultCode returns data filtered by fault code from LOCAL InfluxDB v3
 func (h *InfluxHandler) GetDataByFaultCode(c *gin.Context) {
 	codeStr := c.Query("code")
 	if codeStr == "" {
@@ -142,6 +146,8 @@ func (h *InfluxHandler) GetDataByFaultCode(c *gin.Context) {
 	defer cancel()
 
 	client := config.GetInfluxClient()
+	
+	// ✅ SQL query with WHERE clause
 	query := fmt.Sprintf(`
 		SELECT *
 		FROM inverter_data
@@ -154,7 +160,7 @@ func (h *InfluxHandler) GetDataByFaultCode(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":    "Failed to fetch data",
-			"database": h.database, // ✅ USING database variable
+			"database": h.database,
 		})
 		return
 	}
@@ -165,7 +171,8 @@ func (h *InfluxHandler) GetDataByFaultCode(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"database":   h.database, // ✅ USING database variable
+		"database":   h.database,
+		"mode":       "LOCAL",
 		"fault_code": code,
 		"fault_info": models.FaultCodes[code],
 		"count":      len(results),
@@ -173,14 +180,16 @@ func (h *InfluxHandler) GetDataByFaultCode(c *gin.Context) {
 	})
 }
 
-// GetFaultStats returns aggregated fault statistics from InfluxDB
+// GetFaultStats returns aggregated fault statistics from LOCAL InfluxDB v3
 func (h *InfluxHandler) GetFaultStats(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client := config.GetInfluxClient()
+	
+	// ✅ SQL GROUP BY query
 	query := `
-		SELECT fault_code, COUNT(voltage) as count
+		SELECT fault_code, COUNT(*) as count
 		FROM inverter_data
 		GROUP BY fault_code
 		ORDER BY fault_code
@@ -190,7 +199,7 @@ func (h *InfluxHandler) GetFaultStats(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":    "Failed to aggregate",
-			"database": h.database, // ✅ USING database variable
+			"database": h.database,
 		})
 		return
 	}
@@ -213,18 +222,21 @@ func (h *InfluxHandler) GetFaultStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"database":    h.database, // ✅ USING database variable
+		"database":    h.database,
+		"mode":        "LOCAL",
 		"total_codes": len(enrichedStats),
 		"statistics":  enrichedStats,
 	})
 }
 
-// GetActiveFaults returns only records with active faults from InfluxDB
+// GetActiveFaults returns only records with active faults from LOCAL InfluxDB v3
 func (h *InfluxHandler) GetActiveFaults(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client := config.GetInfluxClient()
+	
+	// ✅ SQL query with WHERE
 	query := `
 		SELECT *
 		FROM inverter_data
@@ -237,7 +249,7 @@ func (h *InfluxHandler) GetActiveFaults(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":    "Failed to fetch data",
-			"database": h.database, // ✅ USING database variable
+			"database": h.database,
 		})
 		return
 	}
@@ -248,18 +260,21 @@ func (h *InfluxHandler) GetActiveFaults(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"database": h.database, // ✅ USING database variable
+		"database": h.database,
+		"mode":     "LOCAL",
 		"count":    len(results),
 		"faults":   results,
 	})
 }
 
-// GetLatestFaults returns the latest fault records from InfluxDB
+// GetLatestFaults returns the latest fault records from LOCAL InfluxDB v3
 func (h *InfluxHandler) GetLatestFaults(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client := config.GetInfluxClient()
+	
+	// ✅ SQL query
 	query := `
 		SELECT *
 		FROM inverter_data
@@ -272,7 +287,7 @@ func (h *InfluxHandler) GetLatestFaults(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":    "Failed to fetch data",
-			"database": h.database, // ✅ USING database variable
+			"database": h.database,
 		})
 		return
 	}
@@ -293,7 +308,8 @@ func (h *InfluxHandler) GetLatestFaults(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"database":     h.database, // ✅ USING database variable
+		"database":     h.database,
+		"mode":         "LOCAL",
 		"total_faults": totalFaults,
 		"by_code":      faultGroups,
 	})

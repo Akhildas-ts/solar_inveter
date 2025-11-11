@@ -44,7 +44,7 @@ func (m *MongoDatabase) Connect() error {
 		return fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
 
-	dbName := getEnv("MONGO_DATABASE", "solar_monitoring")
+	dbName := getEnv("DB_NAME", "solar_monitoring")
 	collectionName := getEnv("MONGO_COLLECTION", "inverter_data")
 	m.collection = m.client.Database(dbName).Collection(collectionName)
 	m.connected = true
@@ -87,18 +87,24 @@ func (m *MongoDatabase) GetCollection() *mongo.Collection {
 	return m.collection
 }
 
-// Helper function to get MongoDB client from activeDB
+// ✅ Helper function to get MongoDB client (works for both data and mappings)
 func GetMongoClient() *mongo.Client {
-	if activeDB == nil {
-		return nil
-	}
-	if mongoDB, ok := activeDB.(*MongoDatabase); ok {
+	// Try mappings DB first
+	if mongoDB := GetMongoDBForMappings(); mongoDB != nil {
 		return mongoDB.GetClient()
 	}
+	
+	// Fallback to activeDB if it's MongoDB
+	if activeDB != nil {
+		if mdb, ok := activeDB.(*MongoDatabase); ok {
+			return mdb.GetClient()
+		}
+	}
+	
 	return nil
 }
 
-// Helper function to get MongoDB collection from activeDB
+// ✅ Helper function to get MongoDB collection from activeDB only
 func GetMongoCollection() *mongo.Collection {
 	if activeDB == nil {
 		return nil

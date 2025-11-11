@@ -23,22 +23,34 @@ type Database interface {
 }
 
 var activeDB Database
+var mongoDB *MongoDatabase // ✅ Always keep MongoDB for mappings
 
 // InitDB initializes the database based on DB_TYPE environment variable
 func InitDB() error {
 	dbType := strings.ToLower(getEnv("DB_TYPE", "mongo"))
 
+	// ✅ ALWAYS initialize MongoDB (for mappings)
+	mongoDB = NewMongoDatabase()
+	if err := mongoDB.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to MongoDB (required for mappings): %w", err)
+	}
+	fmt.Println("✓ MongoDB connected (for mappings)")
+
+	// ✅ Initialize data storage database
 	switch DatabaseType(dbType) {
 	case MongoDB:
-		activeDB = NewMongoDatabase()
+		activeDB = mongoDB
+		fmt.Println("✓ Using MongoDB for data storage")
+		
 	case InfluxDB:
 		activeDB = NewInfluxDatabase()
+		if err := activeDB.Connect(); err != nil {
+			return fmt.Errorf("failed to connect to InfluxDB: %w", err)
+		}
+		fmt.Println("✓ Using InfluxDB for data storage")
+		
 	default:
 		return fmt.Errorf("unsupported database type: %s (use 'mongo' or 'influx')", dbType)
-	}
-
-	if err := activeDB.Connect(); err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", dbType, err)
 	}
 
 	fmt.Printf("✓ Connected to %s successfully!\n", dbType)
@@ -60,9 +72,20 @@ func GetDBType() DatabaseType {
 
 // CloseDB closes the active database connection
 func CloseDB() {
+	// Close data storage DB
 	if activeDB != nil {
 		activeDB.Close()
 	}
+	
+	// Close MongoDB if it's not the active DB
+	if mongoDB != nil && GetDBType() != MongoDB {
+		mongoDB.Close()
+	}
+}
+
+// ✅ Always return MongoDB client (for mappings)
+func GetMongoDBForMappings() *MongoDatabase {
+	return mongoDB
 }
 
 // Helper function to get environment variables with default values

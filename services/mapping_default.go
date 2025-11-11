@@ -1,15 +1,14 @@
 package services
 
 import (
-	"time"
 	"solar_project/models"
+	"time"
 )
-
 
 // if there is no more mapping system is there in the mongodb, so that's time we use the default formate
 func GetDefaultMappings() []models.DataSourceMapping {
 	now := time.Now()
-	
+
 	return []models.DataSourceMapping{
 		{
 			SourceID:    "format_2_inverter",
