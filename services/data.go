@@ -99,7 +99,7 @@ func InitGenerator() {
 	switch dbType {
 	case config.MongoDB:
 		dataWriter = NewMongoWriter()
-		batchSize = 100
+		batchSize = 500
 
 		client := config.GetMongoClient()
 		if client == nil {
@@ -116,7 +116,7 @@ func InitGenerator() {
 			"Raw data collection initialized with auto-cleanup")
 
 	case config.InfluxDB:
-		batchSize = 50
+		batchSize = 1000
 		dataWriter = NewInfluxWriter()
 	default:
 		panic(fmt.Sprintf("Unsupported database type: %s", dbType))

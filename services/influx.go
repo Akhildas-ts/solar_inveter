@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
@@ -13,38 +14,121 @@ import (
 	"solar_project/models"
 )
 
-// InfluxWriter implements DataWriter interface for InfluxDB 3
+// Connection pool with write workers
 type InfluxWriter struct {
-	client   *influxdb3.Client
-	database string
+	client     *influxdb3.Client
+	database   string
+	writeQueue chan []*influxdb3.Point
+	workers    int
+	wg         sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+	// Stats
+	writesSucceeded int64
+	writesFailed    int64
+	mu              sync.Mutex
 }
 
-// NewInfluxWriter creates a new InfluxDB 3 writer
+// NewInfluxWriter creates an optimized InfluxDB v3 writer with connection pool
 func NewInfluxWriter() *InfluxWriter {
-	return &InfluxWriter{
-		client:   config.GetInfluxClient(),
-		database: config.GetInfluxDatabase(),
+	ctx, cancel := context.WithCancel(context.Background())
+
+	writer := &InfluxWriter{
+		client:     config.GetInfluxClient(),
+		database:   config.GetInfluxDatabase(),
+		writeQueue: make(chan []*influxdb3.Point, 100), //  Buffer 100 batches
+		workers:    4,                                  //  4 parallel workers (tune based on CPU)
+		ctx:        ctx,
+		cancel:     cancel,
+	}
+
+	//  Start worker pool
+	for i := 0; i < writer.workers; i++ {
+		writer.wg.Add(1)
+		go writer.writeWorker(i)
+	}
+
+	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INFLUX_INIT",
+		fmt.Sprintf(" Started %d InfluxDB write workers with persistent connection", writer.workers))
+
+	return writer
+}
+
+//  Worker goroutine - uses SAME connection (connection pooling)
+func (w *InfluxWriter) writeWorker(workerID int) {
+	defer w.wg.Done()
+
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case points, ok := <-w.writeQueue:
+			if !ok {
+				return // Channel closed
+			}
+
+			// ✅ Write with timeout and retry
+			err := w.writeWithRetry(points, workerID)
+
+			w.mu.Lock()
+			if err != nil {
+				w.writesFailed += int64(len(points))
+			} else {
+				w.writesSucceeded += int64(len(points))
+			}
+			w.mu.Unlock()
+		}
 	}
 }
 
-// WriteData writes data to InfluxDB 3 using the official client
+// ✅ Write with automatic retry (3 attempts)
+func (w *InfluxWriter) writeWithRetry(points []*influxdb3.Point, workerID int) error {
+	maxRetries := 3
+	baseDelay := 100 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(w.ctx, 30*time.Second)
+		err := w.client.WritePoints(ctx, points)
+		cancel()
+
+		if err == nil {
+			if attempt > 0 {
+				logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INFLUX_RETRY",
+					fmt.Sprintf("✅ Worker %d: Retry succeeded on attempt %d (%d points)",
+						workerID, attempt+1, len(points)))
+			}
+			return nil
+		}
+
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<attempt) // Exponential backoff
+			logger.WriteLog(constants.LOG_LEVEL_WARNING, "", "INFLUX_RETRY",
+				fmt.Sprintf("⚠️  Worker %d: Attempt %d failed, retrying in %v... Error: %v",
+					workerID, attempt+1, delay, err))
+			time.Sleep(delay)
+		} else {
+			logger.WriteLog(constants.LOG_LEVEL_ERROR, "", "INFLUX_WRITE",
+				fmt.Sprintf("❌ Worker %d: All %d attempts failed for %d points. Error: %v",
+					workerID, maxRetries, len(points), err))
+			return err
+		}
+	}
+
+	return fmt.Errorf("max retries exceeded")
+}
+
+// ✅ MAIN WRITE: Non-blocking, queues for workers
 func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 	if len(data) == 0 {
 		return nil
 	}
 
 	if w.client == nil {
-		err := fmt.Errorf("InfluxDB client not initialized")
-		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "INFLUX_WRITE",
-			fmt.Sprintf("❌ %v", err))
-		return err
+		return fmt.Errorf("InfluxDB client not initialized")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Convert data to InfluxDB 3 points
-	var points []*influxdb3.Point
+	// Convert to points
+	points := make([]*influxdb3.Point, 0, len(data))
 	for _, item := range data {
 		payload, ok := item.(InverterPayload)
 		if !ok {
@@ -60,54 +144,64 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 	}
 
 	if len(points) == 0 {
-		logger.WriteLog(constants.LOG_LEVEL_WARNING, requestID, "INFLUX_WRITE",
-			"No valid points to write")
 		return nil
 	}
-	logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "INFLUX_CHECK",
-		fmt.Sprintf("Attempting to write %d points to %s", len(points), w.database))
 
-	// Debug logging
-	logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "INFLUX_DEBUG",
-		fmt.Sprintf("Database: %s, Points: %d/%d, Client: %v",
-			w.database, len(points), len(data), w.client != nil))
-
-	// // ✅ OPTION 1: Try WritePoints first
-	err := w.client.WritePoints(ctx, points)
-
-	// ✅ OPTION 2: If WritePoints doesn't exist, try Write
-	// err := w.client.Write(ctx, points...)
-
-	// ✅ OPTION 3: If both fail, try WriteData with database option
-	// err := w.client.WritePoints(ctx, points)
-
-	if err != nil {
-		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "INFLUX_WRITE",
-			fmt.Sprintf("❌ Batch insert FAILED — %d records, Error: %v", len(points), err))
-		return err
+	// ✅ Queue for workers (non-blocking with timeout)
+	select {
+	case w.writeQueue <- points:
+		return nil // Successfully queued
+	case <-time.After(5 * time.Second):
+		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "INFLUX_QUEUE",
+			fmt.Sprintf("❌ Write queue full! Dropping %d points", len(points)))
+		return fmt.Errorf("write queue full")
 	}
+}
 
-	logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "INFLUX_WRITE",
-		fmt.Sprintf("✅ Batch inserted successfully: %d records", len(points)))
+// ✅ Graceful shutdown
+func (w *InfluxWriter) Close() {
+	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INFLUX_SHUTDOWN",
+		"🛑 Closing InfluxDB writer...")
 
-	return nil
+	// Stop accepting new writes
+	w.cancel()
+	close(w.writeQueue)
+
+	// Wait for all workers to finish
+	w.wg.Wait()
+
+	w.mu.Lock()
+	total := w.writesSucceeded + w.writesFailed
+	successRate := float64(0)
+	if total > 0 {
+		successRate = float64(w.writesSucceeded) / float64(total) * 100
+	}
+	w.mu.Unlock()
+
+	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INFLUX_SHUTDOWN",
+		fmt.Sprintf("✅ Writer closed. Success: %d, Failed: %d (%.1f%%)",
+			w.writesSucceeded, w.writesFailed, successRate))
+}
+
+// ✅ Get stats
+func (w *InfluxWriter) GetStats() (succeeded, failed int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writesSucceeded, w.writesFailed
 }
 
 // convertToInfluxPoint converts InverterPayload to InfluxDB 3 Point
 func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
-	// ✅ Prepare all tags (including optional ones)
 	tags := map[string]string{
 		"device_type": payload.DeviceType,
 		"device_name": payload.DeviceName,
 		"device_id":   payload.DeviceID,
 	}
 
-	// Add optional signal_strength tag
 	if payload.SignalStrength != "" {
 		tags["signal_strength"] = payload.SignalStrength
 	}
 
-	// ✅ Prepare all fields (including optional ones)
 	fields := map[string]interface{}{
 		"serial_no":          payload.Data.SerialNo,
 		"voltage":            payload.Data.S1V,
@@ -116,7 +210,6 @@ func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 		"fault_code":         payload.Data.FaultCode,
 	}
 
-	// Add optional date/time fields
 	if payload.Date != "" {
 		fields["reading_date"] = payload.Date
 	}
@@ -124,15 +217,12 @@ func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 		fields["reading_time"] = payload.Time
 	}
 
-	// ✅ Create point with ALL tags and fields in one call
-	point := influxdb3.NewPoint(
+	return influxdb3.NewPoint(
 		"inverter_data",
 		tags,
 		fields,
 		time.Now(),
 	)
-
-	return point
 }
 
 // ConvertToInfluxRecord converts standardized data to InverterPayload
