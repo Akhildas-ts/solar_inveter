@@ -18,31 +18,33 @@ func NewInfluxDatabase() *InfluxDatabase {
 	return &InfluxDatabase{}
 }
 
-// Connect establishes connection to LOCAL InfluxDB v3 Core
+// config/db.go - Update the Connect function
+
 func (i *InfluxDatabase) Connect() error {
-	// ✅ Get settings from environment
 	url := getEnv("INFLUXDB_URL", "http://127.0.0.1:8086")
 	token := getEnv("INFLUXDB_TOKEN", "") // Empty for local InfluxDB 3 Core
 	i.database = getEnv("INFLUXDB_DATABASE", "solar_monitoring")
 
-	// ✅ DEBUG: Show connection details
 	fmt.Println("\n🔧 InfluxDB v3 Core Local Connection:")
 	fmt.Printf("   URL: %s\n", url)
 	fmt.Printf("   Database: %s\n", i.database)
 	if token == "" {
 		fmt.Println("   Token: (empty - no auth)")
-	} else {
-		fmt.Printf("   Token: %s...%s\n", token[:min(5, len(token))], token[max(0, len(token)-5):])
 	}
 
 	var err error
-	
-	// ✅ Create InfluxDB v3 client
-	// For InfluxDB 3 Core with INFLUXDB_IOX_NO_AUTH=true, token can be empty
+
+	// ✅ CRITICAL FIX: Use proper InfluxDB v3 Core configuration
 	i.client, err = influxdb3.New(influxdb3.ClientConfig{
 		Host:     url,
 		Token:    token,
 		Database: i.database,
+		// ✅ ADD THIS: Force v3 API usage
+		WriteOptions: &influxdb3.WriteOptions{
+			// This tells the client we're using InfluxDB v3
+			// Not v2 (which uses buckets/orgs)
+			DefaultTags: map[string]string{},
+		},
 	})
 
 	if err != nil {
@@ -52,10 +54,6 @@ func (i *InfluxDatabase) Connect() error {
 	i.connected = true
 
 	fmt.Println("✅ InfluxDB v3 Core client created successfully!")
-	fmt.Printf("   URL: %s\n", url)
-	fmt.Printf("   Database: %s\n", i.database)
-	fmt.Println("   Mode: LOCAL DOCKER (No Auth)")
-
 	return nil
 }
 

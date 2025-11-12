@@ -36,7 +36,7 @@ var (
 	batchBuffer []interface{}
 	bufferMutex sync.Mutex
 	flushMutex  sync.Mutex
-	batchSize   = 100
+	batchSize   = 100 // reason 100 - 50, ctx time at influx 10-30 second
 
 	// Collections
 	dataWriter    DataWriter
@@ -87,7 +87,7 @@ type RawDataRecord struct {
 
 func InitGenerator() {
 	// ✅ Load strict mapping mode setting
-	strictMappingMode = getEnvBool("STRICT_MAPPING_MODE", false)
+	strictMappingMode = getEnvBool("STRICT_MAPPING_MODE", true)
 
 	if strictMappingMode {
 		logger.WriteLog(constants.LOG_LEVEL_WARNING, "", "INIT",
@@ -99,6 +99,7 @@ func InitGenerator() {
 	switch dbType {
 	case config.MongoDB:
 		dataWriter = NewMongoWriter()
+		batchSize = 100
 
 		client := config.GetMongoClient()
 		if client == nil {
@@ -115,6 +116,7 @@ func InitGenerator() {
 			"Raw data collection initialized with auto-cleanup")
 
 	case config.InfluxDB:
+		batchSize = 50
 		dataWriter = NewInfluxWriter()
 	default:
 		panic(fmt.Sprintf("Unsupported database type: %s", dbType))

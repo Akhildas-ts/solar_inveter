@@ -40,7 +40,7 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Convert data to InfluxDB 3 points
@@ -64,6 +64,8 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 			"No valid points to write")
 		return nil
 	}
+	logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "INFLUX_CHECK",
+		fmt.Sprintf("Attempting to write %d points to %s", len(points), w.database))
 
 	// Debug logging
 	logger.WriteLog(constants.LOG_LEVEL_INFO, requestID, "INFLUX_DEBUG",
@@ -71,14 +73,14 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 			w.database, len(points), len(data), w.client != nil))
 
 	// // ✅ OPTION 1: Try WritePoints first
-	// err := w.client.WritePoints(ctx, points...)
-	
+	err := w.client.WritePoints(ctx, points)
+
 	// ✅ OPTION 2: If WritePoints doesn't exist, try Write
 	// err := w.client.Write(ctx, points...)
-	
+
 	// ✅ OPTION 3: If both fail, try WriteData with database option
-	err := w.client.WritePoints(ctx, points)  
-	
+	// err := w.client.WritePoints(ctx, points)
+
 	if err != nil {
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "INFLUX_WRITE",
 			fmt.Sprintf("❌ Batch insert FAILED — %d records, Error: %v", len(points), err))
@@ -99,7 +101,7 @@ func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 		"device_name": payload.DeviceName,
 		"device_id":   payload.DeviceID,
 	}
-	
+
 	// Add optional signal_strength tag
 	if payload.SignalStrength != "" {
 		tags["signal_strength"] = payload.SignalStrength
@@ -113,7 +115,7 @@ func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 		"temperature":        payload.Data.InvTemp,
 		"fault_code":         payload.Data.FaultCode,
 	}
-	
+
 	// Add optional date/time fields
 	if payload.Date != "" {
 		fields["reading_date"] = payload.Date
