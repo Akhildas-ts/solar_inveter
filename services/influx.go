@@ -210,18 +210,22 @@ func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 		"fault_code":         payload.Data.FaultCode,
 	}
 
-	if payload.Date != "" {
-		fields["reading_date"] = payload.Date
-	}
-	if payload.Time != "" {
-		fields["reading_time"] = payload.Time
-	}
+	// if payload.Date != "" {
+	// 	fields["reading_date"] = payload.Date
+	// }
+	// if payload.Time != "" {
+	// 	fields["reading_time"] = payload.Time
+	// }
+	timestamp := time.Now()
+if payload.DeviceTimestamp != nil {
+	timestamp = *payload.DeviceTimestamp
+}
 
 	return influxdb3.NewPoint(
 		"inverter_data",
 		tags,
 		fields,
-		time.Now(),
+		timestamp,
 	)
 }
 

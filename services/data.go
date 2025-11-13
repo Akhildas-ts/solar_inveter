@@ -63,26 +63,29 @@ type DataWriter interface {
 }
 
 type InverterPayload struct {
-	DeviceType     string                 `json:"device_type"`
-	DeviceName     string                 `json:"device_name"`
-	DeviceID       string                 `json:"device_id"`
-	Date           string                 `json:"date"`
-	Time           string                 `json:"time"`
-	SignalStrength string                 `json:"signal_strength"`
-	Data           models.InverterDetails `json:"data"`
+	DeviceType      string                 `json:"device_type"`
+	DeviceName      string                 `json:"device_name"`
+	DeviceID        string                 `json:"device_id"`
+	Date            string                 `json:"date"`
+	Time            string                 `json:"time"`
+	SignalStrength  string                 `json:"signal_strength"`
+	Data            models.InverterDetails `json:"data"`
+	Timestamp       time.Time              `json:"timestamp" bson:"timestamp"`
+	DeviceTimestamp *time.Time             `bson:"device_timestamp,omitempty"`
 }
 
 type RawDataRecord struct {
-	RequestID      string                 `bson:"request_id"`
-	RawData        map[string]interface{} `bson:"raw_data"`
-	ReceivedAt     time.Time              `bson:"received_at"`
-	ProcessedAt    *time.Time             `bson:"processed_at,omitempty"`
-	Processed      bool                   `bson:"processed"`
-	SourceID       string                 `bson:"source_id,omitempty"`
-	Error          string                 `bson:"error,omitempty"`
-	MappingError   string                 `bson:"mapping_error,omitempty"`
-	UnknownSource  bool                   `bson:"unknown_source"`
-	NeedsAttention bool                   `bson:"needs_attention"`
+	DeviceTimestamp *time.Time             `bson:"device_timestamp,omitempty"` // ✅ ADD THIS
+	RequestID       string                 `bson:"request_id"`
+	RawData         map[string]interface{} `bson:"raw_data"`
+	ReceivedAt      time.Time              `bson:"received_at"`
+	ProcessedAt     *time.Time             `bson:"processed_at,omitempty"`
+	Processed       bool                   `bson:"processed"`
+	SourceID        string                 `bson:"source_id,omitempty"`
+	Error           string                 `bson:"error,omitempty"`
+	MappingError    string                 `bson:"mapping_error,omitempty"`
+	UnknownSource   bool                   `bson:"unknown_source"`
+	NeedsAttention  bool                   `bson:"needs_attention"`
 }
 
 func InitGenerator() {
@@ -238,10 +241,17 @@ func FlexibleDataHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// ✅ ADD THIS - Extract device timestamp from payload
+	deviceTimestamp := extractDeviceTimestamp(rawData)
+
+	// ✅ MODIFY storeRawDataAsync call to include timestamp
+	if !strictMappingMode {
+		go storeRawDataAsync(requestID, rawData, deviceTimestamp) // Changed: added deviceTimestamp parameter
+	}
 
 	// ✅ STEP 1: Store raw data (only if not in strict mode or for logging)
 	if !strictMappingMode {
-		go storeRawDataAsync(requestID, rawData)
+		go storeRawDataAsync(requestID, rawData, deviceTimestamp)
 	}
 
 	// ✅ STEP 2: Check if mapping service exists
@@ -304,6 +314,7 @@ func FlexibleDataHandler(c *gin.Context) {
 		go updateRawDataSource(requestID, sourceID)
 	}
 
+	recordTimestamp := time.Now()
 	// ✅ STEP 4: Try to apply mapping
 	standardized, err := mappingService.MapFields(sourceID, rawData)
 	if err != nil {
@@ -311,6 +322,25 @@ func FlexibleDataHandler(c *gin.Context) {
 		errorMsg := fmt.Sprintf("Mapping failed: %v", err)
 
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "MAPPING", errorMsg)
+
+		// ✅ PRESERVE HISTORICAL TIMESTAMP - ADD THIS SECTION HERE
+
+		if deviceTimestamp != nil {
+			recordTimestamp = *deviceTimestamp
+			logger.WriteLog(constants.LOG_LEVEL_DEBUG, requestID, "TIMESTAMP",
+				fmt.Sprintf("Using historical timestamp: %s", recordTimestamp.Format(time.RFC3339)))
+		}
+
+		// Preserve device info
+		if deviceName, ok := rawData["device_name"].(string); ok {
+			standardized["device_name"] = deviceName
+		}
+		if deviceID, ok := rawData["device_id"].(string); ok {
+			standardized["device_id"] = deviceID
+		}
+		standardized["device_type"] = sourceID
+		standardized["request_id"] = requestID
+		standardized["timestamp"] = recordTimestamp
 
 		if strictMappingMode {
 			// ✅ STOP THE PROGRAM
@@ -344,12 +374,26 @@ func FlexibleDataHandler(c *gin.Context) {
 	standardized["device_type"] = sourceID
 	standardized["request_id"] = requestID
 
+	// var record interface{}
+	// switch config.GetDBType() {
+	// case config.MongoDB:
+	// 	record = convertStandardizedToMongo(standardized)
+	// case config.InfluxDB:
+	// 	record = convertStandardizedToInflux(standardized)
+	// }
+
+	// ✅ USE HISTORICAL TIMESTAMP IF PROVIDED
+	recordTimestamp = time.Now()
+	if deviceTimestamp != nil {
+		recordTimestamp = *deviceTimestamp
+	}
+
 	var record interface{}
 	switch config.GetDBType() {
 	case config.MongoDB:
-		record = convertStandardizedToMongo(standardized)
+		record = convertStandardizedToMongo(standardized, recordTimestamp) // Added timestamp parameter
 	case config.InfluxDB:
-		record = convertStandardizedToInflux(standardized)
+		record = convertStandardizedToInflux(standardized, recordTimestamp) // Added timestamp parameter
 	}
 
 	// ✅ Add to buffer
@@ -384,10 +428,43 @@ func FlexibleDataHandler(c *gin.Context) {
 		"processing_ms": processingTime,
 		"strict_mode":   strictMappingMode,
 	})
+} // flexible handler ends///
+
+// ✅ ADD THIS NEW FUNCTION (around line 80, after type definitions)
+func extractDeviceTimestamp(rawData map[string]interface{}) *time.Time {
+	// Try device_timestamp field (RFC3339 format from simulator)
+	if tsStr, ok := rawData["device_timestamp"].(string); ok {
+		if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+			return &ts
+		}
+	}
+
+	// Try timestamp field (various formats)
+	if tsStr, ok := rawData["timestamp"].(string); ok {
+		formats := []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05",
+			"2006-01-02 15:04:05",
+		}
+		for _, format := range formats {
+			if ts, err := time.Parse(format, tsStr); err == nil {
+				return &ts
+			}
+		}
+	}
+
+	// Try Unix timestamp
+	if tsNum, ok := rawData["timestamp"].(float64); ok {
+		ts := time.Unix(int64(tsNum), 0)
+		return &ts
+	}
+
+	return nil
 }
 
 // ✅ Store raw data (only in non-strict mode)
-func storeRawDataAsync(requestID string, data map[string]interface{}) {
+// NEW (change signature):
+func storeRawDataAsync(requestID string, data map[string]interface{}, deviceTimestamp *time.Time) {
 	if rawCollection == nil {
 		return
 	}
@@ -396,12 +473,13 @@ func storeRawDataAsync(requestID string, data map[string]interface{}) {
 	defer cancel()
 
 	rawDoc := RawDataRecord{
-		RequestID:      requestID,
-		RawData:        data,
-		ReceivedAt:     time.Now(),
-		Processed:      false,
-		UnknownSource:  false,
-		NeedsAttention: false,
+		RequestID:       requestID,
+		RawData:         data,
+		ReceivedAt:      time.Now(),
+		Processed:       false,
+		UnknownSource:   false,
+		NeedsAttention:  false,
+		DeviceTimestamp: deviceTimestamp,
 	}
 
 	_, err := rawCollection.InsertOne(ctx, rawDoc)
@@ -609,12 +687,13 @@ func GracefulShutdown() {
 			GetInsertedCount(), GetFailedCount()))
 }
 
-func convertStandardizedToMongo(data map[string]interface{}) interface{} {
+func convertStandardizedToMongo(data map[string]interface{}, timestamp time.Time) interface{} {
 	return models.InverterData{
 		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
 		DeviceName: getStringOrDefault(data, "device_name", "unknown"),
 		DeviceID:   getStringOrDefault(data, "device_id", "unknown"),
-		Timestamp:  time.Now(),
+		// Timestamp:  time.Now(),
+		Timestamp: timestamp,
 		Data: models.InverterDetails{
 			SerialNo:         getStringOrDefault(data, "serial_no", "UNKNOWN"),
 			S1V:              getIntOrDefault(data, "voltage", 0),
@@ -625,11 +704,12 @@ func convertStandardizedToMongo(data map[string]interface{}) interface{} {
 	}
 }
 
-func convertStandardizedToInflux(data map[string]interface{}) InverterPayload {
+func convertStandardizedToInflux(data map[string]interface{}, timestamp time.Time) InverterPayload {
 	return InverterPayload{
 		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
 		DeviceName: getStringOrDefault(data, "device_name", "unknown"),
 		DeviceID:   getStringOrDefault(data, "device_id", "unknown"),
+		Timestamp:  timestamp,
 		Data: models.InverterDetails{
 			SerialNo:         getStringOrDefault(data, "serial_no", "UNKNOWN"),
 			S1V:              getIntOrDefault(data, "voltage", 0),

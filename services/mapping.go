@@ -25,6 +25,7 @@ type MongoMappingService struct {
 	watchCtx     context.Context
 	watchCancel  context.CancelFunc
 	autoReload   bool
+	watchEnabled bool // ✅ Track if watch is available
 }
 
 // NewMongoMappingService creates and initializes the mapping service
@@ -39,13 +40,14 @@ func NewMongoMappingService(autoReload bool) (*MongoMappingService, error) {
 	watchCtx, watchCancel := context.WithCancel(ctx)
 
 	service := &MongoMappingService{
-		cache:       make(map[string]*models.DataSourceMapping),
-		collection:  client.Database(dbName).Collection("mappings"),
-		historyCol:  client.Database(dbName).Collection("mapping_history"),
-		ctx:         ctx,
-		watchCtx:    watchCtx,
-		watchCancel: watchCancel,
-		autoReload:  autoReload,
+		cache:        make(map[string]*models.DataSourceMapping),
+		collection:   client.Database(dbName).Collection("mappings"),
+		historyCol:   client.Database(dbName).Collection("mapping_history"),
+		ctx:          ctx,
+		watchCtx:     watchCtx,
+		watchCancel:  watchCancel,
+		autoReload:   autoReload,
+		watchEnabled: false, // ✅ Will be set if watch succeeds
 	}
 
 	if err := service.createIndexes(); err != nil {
@@ -56,11 +58,12 @@ func NewMongoMappingService(autoReload bool) (*MongoMappingService, error) {
 		return nil, err
 	}
 
+	// ✅ FIXED: Try to enable watch, but don't fail if not available
 	if autoReload {
-		go service.watchChanges()
+		go service.watchChangesWithFallback()
 	}
 
-	logger.WriteLog("INFO", "", "MAPPING", 
+	logger.WriteLog("INFO", "", "MAPPING",
 		fmt.Sprintf("Service initialized with %d mappings", len(service.cache)))
 
 	return service, nil
@@ -91,16 +94,16 @@ func (s *MongoMappingService) seedDefaults() error {
 	defer cancel()
 
 	defaults := GetDefaultMappings()
-	
+
 	for _, mapping := range defaults {
 		if _, err := s.collection.InsertOne(ctx, mapping); err != nil {
 			return err
 		}
 	}
 
-	logger.WriteLog("INFO", "", "MAPPING", 
+	logger.WriteLog("INFO", "", "MAPPING",
 		fmt.Sprintf("Created %d default mappings", len(defaults)))
-	
+
 	return nil
 }
 
@@ -119,7 +122,7 @@ func (s *MongoMappingService) LoadFromDB() error {
 	defer cursor.Close(ctx)
 
 	newCache := make(map[string]*models.DataSourceMapping)
-	
+
 	for cursor.Next(ctx) {
 		var mapping models.DataSourceMapping
 		if err := cursor.Decode(&mapping); err != nil {
@@ -129,15 +132,74 @@ func (s *MongoMappingService) LoadFromDB() error {
 	}
 
 	s.cache = newCache
-	
-	logger.WriteLog("INFO", "", "MAPPING", 
+
+	logger.WriteLog("INFO", "", "MAPPING",
 		fmt.Sprintf("Loaded %d mappings from MongoDB", len(newCache)))
-	
+
 	return cursor.Err()
 }
 
-// watchChanges monitors MongoDB for changes and reloads cache
-func (s *MongoMappingService) watchChanges() {
+// ✅ FIXED: watchChangesWithFallback - Try watch, fallback to polling if unavailable
+func (s *MongoMappingService) watchChangesWithFallback() {
+	// First, try to use change streams
+	if s.tryWatchChanges() {
+		s.watchEnabled = true
+		return
+	}
+
+	// ✅ Fallback: Poll for changes every 10 seconds
+	logger.WriteLog("INFO", "", "MAPPING",
+		"Change streams not available - using polling mode (10s interval)")
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	var lastModTime time.Time
+	fileInfo, err := s.collection.Aggregate(s.watchCtx, mongo.Pipeline{
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "updated_at", Value: -1}}}},
+		bson.D{{Key: "$limit", Value: 1}},
+		bson.D{{Key: "$project", Value: bson.D{{Key: "updated_at", Value: 1}}}},
+	})
+	if err == nil {
+		defer fileInfo.Close(s.watchCtx)
+		if fileInfo.Next(s.watchCtx) {
+			var result bson.M
+			fileInfo.Decode(&result)
+			if updatedAt, ok := result["updated_at"].(time.Time); ok {
+				lastModTime = updatedAt
+			}
+		}
+	}
+
+	for range ticker.C {
+		// Get latest modification time
+		cursor, err := s.collection.Aggregate(s.watchCtx, mongo.Pipeline{
+			bson.D{{Key: "$sort", Value: bson.D{{Key: "updated_at", Value: -1}}}},
+			bson.D{{Key: "$limit", Value: 1}},
+			bson.D{{Key: "$project", Value: bson.D{{Key: "updated_at", Value: 1}}}},
+		})
+
+		if err != nil {
+			continue
+		}
+
+		if cursor.Next(s.watchCtx) {
+			var result bson.M
+			cursor.Decode(&result)
+			if updatedAt, ok := result["updated_at"].(time.Time); ok {
+				if updatedAt.After(lastModTime) {
+					logger.WriteLog("INFO", "", "MAPPING", "Change detected (polling) - reloading")
+					s.LoadFromDB()
+					lastModTime = updatedAt
+				}
+			}
+		}
+		cursor.Close(s.watchCtx)
+	}
+}
+
+// ✅ NEW: tryWatchChanges - Attempts to use change streams
+func (s *MongoMappingService) tryWatchChanges() bool {
 	pipeline := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: bson.D{
 			{Key: "operationType", Value: bson.D{
@@ -149,15 +211,20 @@ func (s *MongoMappingService) watchChanges() {
 	opts := options.ChangeStream().SetFullDocument(options.UpdateLookup)
 	stream, err := s.collection.Watch(s.watchCtx, pipeline, opts)
 	if err != nil {
-		logger.WriteLog("ERROR", "", "MAPPING", fmt.Sprintf("Watch failed: %v", err))
-		return
+		logger.WriteLog("WARNING", "", "MAPPING",
+			fmt.Sprintf("Change streams not available (replica sets required): %v. Using polling fallback.", err))
+		return false
 	}
 	defer stream.Close(s.watchCtx)
+
+	logger.WriteLog("INFO", "", "MAPPING", "✅ Change streams enabled - real-time mapping updates")
 
 	for stream.Next(s.watchCtx) {
 		logger.WriteLog("INFO", "", "MAPPING", "Change detected - reloading")
 		s.LoadFromDB()
 	}
+
+	return true
 }
 
 // GetMapping retrieves a mapping from cache
@@ -169,7 +236,7 @@ func (s *MongoMappingService) GetMapping(sourceID string) (*models.DataSourceMap
 	if !exists {
 		return nil, fmt.Errorf("mapping not found: %s", sourceID)
 	}
-	
+
 	return mapping, nil
 }
 
@@ -197,7 +264,7 @@ func (s *MongoMappingService) MapFields(sourceID string, rawData map[string]inte
 
 	for _, fieldMap := range mapping.Mappings {
 		value := s.extractValue(dataSource, rawData, fieldMap)
-		
+
 		if value == nil {
 			if fieldMap.Required {
 				return nil, fmt.Errorf("required field missing: %s", fieldMap.SourceField)
@@ -216,11 +283,11 @@ func (s *MongoMappingService) getDataSource(raw map[string]interface{}, nestedPa
 	if nestedPath == "" {
 		return raw
 	}
-	
+
 	if nested, ok := raw[nestedPath].(map[string]interface{}); ok {
 		return nested
 	}
-	
+
 	return raw
 }
 
@@ -229,11 +296,11 @@ func (s *MongoMappingService) extractValue(dataSource, rawData map[string]interf
 	if value, exists := dataSource[field.SourceField]; exists {
 		return value
 	}
-	
+
 	if value, exists := rawData[field.SourceField]; exists {
 		return value
 	}
-	
+
 	return field.DefaultValue
 }
 
@@ -248,7 +315,7 @@ func (s *MongoMappingService) DetectSourceID(rawData map[string]interface{}) str
 	for sourceID, mapping := range s.cache {
 		score := s.calculateMatchScore(rawData, mapping)
 		threshold := len(mapping.Mappings) * 40 / 100
-		
+
 		if score > bestScore && score >= threshold {
 			bestScore = score
 			bestMatch = sourceID
@@ -262,7 +329,7 @@ func (s *MongoMappingService) DetectSourceID(rawData map[string]interface{}) str
 func (s *MongoMappingService) calculateMatchScore(raw map[string]interface{}, mapping *models.DataSourceMapping) int {
 	score := 0
 	sources := []map[string]interface{}{raw}
-	
+
 	if mapping.NestedPath != "" {
 		if nested, ok := raw[mapping.NestedPath].(map[string]interface{}); ok {
 			sources = append(sources, nested)
@@ -305,7 +372,7 @@ func (s *MongoMappingService) CreateMapping(mapping *models.DataSourceMapping, c
 	}
 
 	s.recordHistory(mapping.SourceID, "CREATE", nil, mapping, createdBy, "Created")
-	
+
 	return nil
 }
 
@@ -331,14 +398,14 @@ func (s *MongoMappingService) UpdateMapping(sourceID string, mapping *models.Dat
 
 	filter := bson.M{"source_id": sourceID}
 	update := bson.M{"$set": mapping}
-	
+
 	_, err = s.collection.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return err
 	}
 
 	s.recordHistory(sourceID, "UPDATE", oldMapping, mapping, updatedBy, reason)
-	
+
 	return nil
 }
 
@@ -365,7 +432,7 @@ func (s *MongoMappingService) DeleteMapping(sourceID, deletedBy, reason string) 
 	}
 
 	s.recordHistory(sourceID, "DELETE", oldMapping, nil, deletedBy, reason)
-	
+
 	return nil
 }
 
