@@ -18,6 +18,11 @@ func NewInfluxDatabase() *InfluxDatabase {
 	return &InfluxDatabase{}
 }
 
+func SetActiveDB(db Database) {
+    activeDB = db
+}
+
+
 // config/db.go - Update the Connect function
 
 func (i *InfluxDatabase) Connect() error {

@@ -2,23 +2,33 @@ services:
   influxdb3:
     image: influxdb:3-core
     container_name: solar_influxdb3
+
     ports:
       - "8086:8086"
+
     volumes:
       - influxdb3-data:/var/lib/influxdb3
+      - ./influxdb3-config.toml:/etc/influxdb3/config.toml
+
+    environment:
+      - INFLUXD_HTTP_BIND_ADDRESS=:8086
+
     command:
       - serve
-      - --node-id
-      - solar-node-01
+      - --http-bind
+      - 0.0.0.0:8086
       - --object-store
       - file
       - --data-dir
       - /var/lib/influxdb3
-      - --http-bind
-      - 0.0.0.0:8086
-      - --without-auth
+
     restart: unless-stopped
 
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  influxdb3-data:  # ← This was missing!
+  influxdb3-data:

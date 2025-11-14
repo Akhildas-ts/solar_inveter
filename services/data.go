@@ -420,13 +420,15 @@ func FlexibleDataHandler(c *gin.Context) {
 	processingTime := time.Since(startTime).Milliseconds()
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":        "success",
-		"request_id":    requestID,
-		"source_id":     sourceID,
-		"buffer_size":   currentBufferSize,
-		"fields_mapped": len(standardized),
-		"processing_ms": processingTime,
-		"strict_mode":   strictMappingMode,
+		"status":           "success",
+		"request_id":       requestID,
+		"source_id":        sourceID,
+		"buffer_size":      currentBufferSize,
+		"fields_mapped":    len(standardized),
+		"processing_ms":    processingTime,
+		"strict_mode":      strictMappingMode,
+		"historical_ts":    deviceTimestamp != nil,
+		"record_timestamp": recordTimestamp.Format(time.RFC3339),
 	})
 } // flexible handler ends///
 
@@ -434,11 +436,17 @@ func FlexibleDataHandler(c *gin.Context) {
 func extractDeviceTimestamp(rawData map[string]interface{}) *time.Time {
 	// Try device_timestamp field (RFC3339 format from simulator)
 	if tsStr, ok := rawData["device_timestamp"].(string); ok {
-		if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
-			return &ts
-		}
-	}
-
+        fmt.Printf("🕐 Found device_timestamp in raw data: %s\n", tsStr)
+        if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+            fmt.Printf("✅ Parsed device_timestamp successfully: %s\n", ts.Format("2006-01-02 15:04:05"))
+            return &ts
+        } else {
+            fmt.Printf("❌ Failed to parse device_timestamp: %v\n", err)
+        }
+    } else {
+        fmt.Printf("⚠️  No device_timestamp found in raw data. Keys present: %v\n", getKeys(rawData))
+    }
+    
 	// Try timestamp field (various formats)
 	if tsStr, ok := rawData["timestamp"].(string); ok {
 		formats := []string{
@@ -462,6 +470,14 @@ func extractDeviceTimestamp(rawData map[string]interface{}) *time.Time {
 	return nil
 }
 
+
+func getKeys(m map[string]interface{}) []string {
+    keys := make([]string, 0, len(m))
+    for k := range m {
+        keys = append(keys, k)
+    }
+    return keys
+}
 // ✅ Store raw data (only in non-strict mode)
 // NEW (change signature):
 func storeRawDataAsync(requestID string, data map[string]interface{}, deviceTimestamp *time.Time) {
@@ -703,9 +719,8 @@ func convertStandardizedToMongo(data map[string]interface{}, timestamp time.Time
 		},
 	}
 }
-
 func convertStandardizedToInflux(data map[string]interface{}, timestamp time.Time) InverterPayload {
-	return InverterPayload{
+	payload := InverterPayload{
 		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
 		DeviceName: getStringOrDefault(data, "device_name", "unknown"),
 		DeviceID:   getStringOrDefault(data, "device_id", "unknown"),
@@ -718,6 +733,11 @@ func convertStandardizedToInflux(data map[string]interface{}, timestamp time.Tim
 			FaultCode:        getIntOrDefault(data, "fault_code", 0),
 		},
 	}
+
+	// ✅ ADD THIS: Set DeviceTimestamp if timestamp is historical
+	payload.DeviceTimestamp = &timestamp
+
+	return payload
 }
 
 func getStringOrDefault(data map[string]interface{}, key string, defaultValue string) string {

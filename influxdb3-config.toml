@@ -1,0 +1,12 @@
+[server]
+http_bind_address = "0.0.0.0:8086"
+
+[ingester]
+enabled = true
+wal_directory = "/var/lib/influxdb3/wal"
+
+[object_store]
+directory = "/var/lib/influxdb3/object-store"
+
+[querier]
+enabled = true

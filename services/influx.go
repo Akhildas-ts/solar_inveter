@@ -14,7 +14,6 @@ import (
 	"solar_project/models"
 )
 
-// Connection pool with write workers
 type InfluxWriter struct {
 	client     *influxdb3.Client
 	database   string
@@ -23,38 +22,34 @@ type InfluxWriter struct {
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancel     context.CancelFunc
-	// Stats
 	writesSucceeded int64
 	writesFailed    int64
 	mu              sync.Mutex
 }
 
-// NewInfluxWriter creates an optimized InfluxDB v3 writer with connection pool
 func NewInfluxWriter() *InfluxWriter {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	writer := &InfluxWriter{
 		client:     config.GetInfluxClient(),
 		database:   config.GetInfluxDatabase(),
-		writeQueue: make(chan []*influxdb3.Point, 100), //  Buffer 100 batches
-		workers:    4,                                  //  4 parallel workers (tune based on CPU)
+		writeQueue: make(chan []*influxdb3.Point, 100),
+		workers:    4,
 		ctx:        ctx,
 		cancel:     cancel,
 	}
 
-	//  Start worker pool
 	for i := 0; i < writer.workers; i++ {
 		writer.wg.Add(1)
 		go writer.writeWorker(i)
 	}
 
 	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INFLUX_INIT",
-		fmt.Sprintf(" Started %d InfluxDB write workers with persistent connection", writer.workers))
+		fmt.Sprintf("✅ Started %d InfluxDB v3 Core write workers", writer.workers))
 
 	return writer
 }
 
-//  Worker goroutine - uses SAME connection (connection pooling)
 func (w *InfluxWriter) writeWorker(workerID int) {
 	defer w.wg.Done()
 
@@ -64,10 +59,9 @@ func (w *InfluxWriter) writeWorker(workerID int) {
 			return
 		case points, ok := <-w.writeQueue:
 			if !ok {
-				return // Channel closed
+				return
 			}
 
-			// ✅ Write with timeout and retry
 			err := w.writeWithRetry(points, workerID)
 
 			w.mu.Lock()
@@ -81,13 +75,15 @@ func (w *InfluxWriter) writeWorker(workerID int) {
 	}
 }
 
-// ✅ Write with automatic retry (3 attempts)
 func (w *InfluxWriter) writeWithRetry(points []*influxdb3.Point, workerID int) error {
 	maxRetries := 3
 	baseDelay := 100 * time.Millisecond
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		// ✅ CRITICAL: Use 30-second timeout for InfluxDB v3 Core
 		ctx, cancel := context.WithTimeout(w.ctx, 30*time.Second)
+		
+		// ✅ FIXED: Use the correct v3 API method
 		err := w.client.WritePoints(ctx, points)
 		cancel()
 
@@ -100,24 +96,23 @@ func (w *InfluxWriter) writeWithRetry(points []*influxdb3.Point, workerID int) e
 			return nil
 		}
 
+		// Log specific error
+		logger.WriteLog(constants.LOG_LEVEL_WARNING, "", "INFLUX_RETRY",
+			fmt.Sprintf("⚠️  Worker %d: Attempt %d/%d failed for %d points. Error: %v",
+				workerID, attempt+1, maxRetries, len(points), err))
+
 		if attempt < maxRetries-1 {
-			delay := baseDelay * time.Duration(1<<attempt) // Exponential backoff
-			logger.WriteLog(constants.LOG_LEVEL_WARNING, "", "INFLUX_RETRY",
-				fmt.Sprintf("⚠️  Worker %d: Attempt %d failed, retrying in %v... Error: %v",
-					workerID, attempt+1, delay, err))
+			delay := baseDelay * time.Duration(1<<attempt)
 			time.Sleep(delay)
-		} else {
-			logger.WriteLog(constants.LOG_LEVEL_ERROR, "", "INFLUX_WRITE",
-				fmt.Sprintf("❌ Worker %d: All %d attempts failed for %d points. Error: %v",
-					workerID, maxRetries, len(points), err))
-			return err
 		}
 	}
 
+	logger.WriteLog(constants.LOG_LEVEL_ERROR, "", "INFLUX_WRITE",
+		fmt.Sprintf("❌ Worker %d: All %d attempts failed for %d points",
+			workerID, maxRetries, len(points)))
 	return fmt.Errorf("max retries exceeded")
 }
 
-// ✅ MAIN WRITE: Non-blocking, queues for workers
 func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 	if len(data) == 0 {
 		return nil
@@ -127,7 +122,6 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 		return fmt.Errorf("InfluxDB client not initialized")
 	}
 
-	// Convert to points
 	points := make([]*influxdb3.Point, 0, len(data))
 	for _, item := range data {
 		payload, ok := item.(InverterPayload)
@@ -147,10 +141,9 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 		return nil
 	}
 
-	// ✅ Queue for workers (non-blocking with timeout)
 	select {
 	case w.writeQueue <- points:
-		return nil // Successfully queued
+		return nil
 	case <-time.After(5 * time.Second):
 		logger.WriteLog(constants.LOG_LEVEL_ERROR, requestID, "INFLUX_QUEUE",
 			fmt.Sprintf("❌ Write queue full! Dropping %d points", len(points)))
@@ -158,16 +151,12 @@ func (w *InfluxWriter) WriteData(data []interface{}, requestID string) error {
 	}
 }
 
-// ✅ Graceful shutdown
 func (w *InfluxWriter) Close() {
 	logger.WriteLog(constants.LOG_LEVEL_INFO, "", "INFLUX_SHUTDOWN",
 		"🛑 Closing InfluxDB writer...")
 
-	// Stop accepting new writes
 	w.cancel()
 	close(w.writeQueue)
-
-	// Wait for all workers to finish
 	w.wg.Wait()
 
 	w.mu.Lock()
@@ -183,14 +172,13 @@ func (w *InfluxWriter) Close() {
 			w.writesSucceeded, w.writesFailed, successRate))
 }
 
-// ✅ Get stats
 func (w *InfluxWriter) GetStats() (succeeded, failed int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writesSucceeded, w.writesFailed
 }
 
-// convertToInfluxPoint converts InverterPayload to InfluxDB 3 Point
+// ✅ FIXED: Proper point creation for InfluxDB v3 Core
 func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 	tags := map[string]string{
 		"device_type": payload.DeviceType,
@@ -210,16 +198,11 @@ func convertToInfluxPoint(payload InverterPayload) *influxdb3.Point {
 		"fault_code":         payload.Data.FaultCode,
 	}
 
-	// if payload.Date != "" {
-	// 	fields["reading_date"] = payload.Date
-	// }
-	// if payload.Time != "" {
-	// 	fields["reading_time"] = payload.Time
-	// }
+	// ✅ Use historical timestamp if provided
 	timestamp := time.Now()
-if payload.DeviceTimestamp != nil {
-	timestamp = *payload.DeviceTimestamp
-}
+	if payload.DeviceTimestamp != nil {
+		timestamp = *payload.DeviceTimestamp
+	}
 
 	return influxdb3.NewPoint(
 		"inverter_data",
@@ -229,7 +212,6 @@ if payload.DeviceTimestamp != nil {
 	)
 }
 
-// ConvertToInfluxRecord converts standardized data to InverterPayload
 func ConvertToInfluxRecord(data map[string]interface{}) InverterPayload {
 	return InverterPayload{
 		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
