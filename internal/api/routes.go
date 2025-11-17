@@ -1,3 +1,4 @@
+// internal/api/routes.go (UPDATED)
 package api
 
 import (
@@ -5,9 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetupRoutes configures all API routes
+// SetupRoutes configures all API routes including raw data management
 func SetupRoutes(r *gin.Engine, svc *service.Service) {
 	h := NewHandler(svc)
+	rawHandler := NewRawDataHandler(svc)
 
 	api := r.Group("/api")
 	{
@@ -26,6 +28,20 @@ func SetupRoutes(r *gin.Engine, svc *service.Service) {
 			mappings.POST("", h.CreateMapping)
 			mappings.PUT("/:id", h.UpdateMapping)
 			mappings.DELETE("/:id", h.DeleteMapping)
+		}
+
+		// Raw data management 
+		raw := api.Group("/raw")
+		{
+			raw.GET("/stats", rawHandler.GetRawStats)
+			raw.POST("/reprocess/:id", rawHandler.ReprocessRawData)
+		}
+
+		// Cache management 
+		cache := api.Group("/cache")
+		{
+			cache.GET("/stats", rawHandler.GetCacheStats)
+			cache.POST("/clear", rawHandler.ClearCache)
 		}
 	}
 }
