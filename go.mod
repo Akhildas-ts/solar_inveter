@@ -2,8 +2,6 @@ module solar_project
 
 go 1.23.10
 
-toolchain go1.24.9
-
 require (
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.10.0
 	github.com/gin-gonic/gin v1.11.0
