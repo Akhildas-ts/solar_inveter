@@ -13,7 +13,7 @@ type CacheItem struct {
 	Expiration int64
 }
 
-// Cache provides an efficient in-memory cache with TTL
+// Cache provides an efficient in-memory cache with TTL (time to live )
 type Cache struct {
 	mu    sync.RWMutex
 	items map[string]CacheItem
