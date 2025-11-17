@@ -80,7 +80,7 @@ func main() {
 func setupRouter(svc *service.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	
+
 	// Middleware
 	r.Use(gin.Recovery())
 	r.Use(api.Logger())
