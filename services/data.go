@@ -436,17 +436,17 @@ func FlexibleDataHandler(c *gin.Context) {
 func extractDeviceTimestamp(rawData map[string]interface{}) *time.Time {
 	// Try device_timestamp field (RFC3339 format from simulator)
 	if tsStr, ok := rawData["device_timestamp"].(string); ok {
-        fmt.Printf("🕐 Found device_timestamp in raw data: %s\n", tsStr)
-        if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
-            fmt.Printf("✅ Parsed device_timestamp successfully: %s\n", ts.Format("2006-01-02 15:04:05"))
-            return &ts
-        } else {
-            fmt.Printf("❌ Failed to parse device_timestamp: %v\n", err)
-        }
-    } else {
-        fmt.Printf("⚠️  No device_timestamp found in raw data. Keys present: %v\n", getKeys(rawData))
-    }
-    
+		fmt.Printf("🕐 Found device_timestamp in raw data: %s\n", tsStr)
+		if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+			fmt.Printf("✅ Parsed device_timestamp successfully: %s\n", ts.Format("2006-01-02 15:04:05"))
+			return &ts
+		} else {
+			fmt.Printf("❌ Failed to parse device_timestamp: %v\n", err)
+		}
+	} else {
+		fmt.Printf("⚠️  No device_timestamp found in raw data. Keys present: %v\n", getKeys(rawData))
+	}
+
 	// Try timestamp field (various formats)
 	if tsStr, ok := rawData["timestamp"].(string); ok {
 		formats := []string{
@@ -470,14 +470,14 @@ func extractDeviceTimestamp(rawData map[string]interface{}) *time.Time {
 	return nil
 }
 
-
 func getKeys(m map[string]interface{}) []string {
-    keys := make([]string, 0, len(m))
-    for k := range m {
-        keys = append(keys, k)
-    }
-    return keys
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
+
 // ✅ Store raw data (only in non-strict mode)
 // NEW (change signature):
 func storeRawDataAsync(requestID string, data map[string]interface{}, deviceTimestamp *time.Time) {
@@ -704,19 +704,39 @@ func GracefulShutdown() {
 }
 
 func convertStandardizedToMongo(data map[string]interface{}, timestamp time.Time) interface{} {
+	deviceType := getStringOrDefault(data, "device_type", "unknown")
+	deviceName := getStringOrDefault(data, "device_name", "unknown")
+	deviceID := getStringOrDefault(data, "device_id", "unknown")
+	signalStrength := getStringOrDefault(data, "signal_strength", "")
+
+	//  Extract date/time if provided
+	date := getStringOrDefault(data, "date", "")
+	timeStr := getStringOrDefault(data, "time", "")
+
+	//  Build nested data object with ALL sensor readings
+	dataObject := models.InverterDetails{
+		SerialNo:         getStringOrDefault(data, "serial_no", "UNKNOWN"),
+		S1V:              getIntOrDefault(data, "voltage", 0),
+		TotalOutputPower: getIntOrDefault(data, "power", 0),
+		F:                getIntOrDefault(data, "frequency", 0),    
+		TodayE:           getIntOrDefault(data, "today_energy", 0), 
+		TotalE:           getIntOrDefault(data, "total_energy", 0), 
+		InvTemp:          getIntOrDefault(data, "temperature", 0),
+		FaultCode:        getIntOrDefault(data, "fault_code", 0),
+	}
+	// ✅ Return Format 1 structure
 	return models.InverterData{
-		DeviceType: getStringOrDefault(data, "device_type", "unknown"),
-		DeviceName: getStringOrDefault(data, "device_name", "unknown"),
-		DeviceID:   getStringOrDefault(data, "device_id", "unknown"),
-		// Timestamp:  time.Now(),
-		Timestamp: timestamp,
-		Data: models.InverterDetails{
-			SerialNo:         getStringOrDefault(data, "serial_no", "UNKNOWN"),
-			S1V:              getIntOrDefault(data, "voltage", 0),
-			TotalOutputPower: getIntOrDefault(data, "power", 0),
-			InvTemp:          getIntOrDefault(data, "temperature", 0),
-			FaultCode:        getIntOrDefault(data, "fault_code", 0),
-		},
+		// Root level: Device metadata
+		DeviceType:     deviceType,
+		DeviceName:     deviceName,
+		DeviceID:       deviceID,
+		SignalStrength: signalStrength,
+		Date:           date,
+		Time:           timeStr,
+		Timestamp:      timestamp,
+
+		// Nested: Sensor readings
+		Data: dataObject,
 	}
 }
 func convertStandardizedToInflux(data map[string]interface{}, timestamp time.Time) InverterPayload {

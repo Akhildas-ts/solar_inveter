@@ -21,6 +21,11 @@ type InverterDetails struct {
 	TotalOutputPower int    `json:"total_output_power" bson:"total_output_power"`
 	InvTemp          int    `json:"inv_temp" bson:"inv_temp"`
 	FaultCode        int    `json:"fault_code" bson:"fault_code"`
+	F                int    `json:"f" bson:"f"`                // Frequency
+	TodayE           int    `json:"today_e" bson:"today_e"`    // Today's energy
+	TotalE           int    `json:"total_e" bson:"total_e"`    // Total energy
+	State            int    `json:"state" bson:"state"`        // State
+	GridVoltageV1    float64 `json:"grid_voltage_v_1" bson:"grid_voltage_v_1"`
 }
 
 // SimplifiedData is a lightweight version (for APIs, charts, etc.)
