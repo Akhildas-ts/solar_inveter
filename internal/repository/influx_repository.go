@@ -20,8 +20,16 @@ func NewInfluxRepo(db *config.InfluxDatabase) *InfluxRepo {
 	return &InfluxRepo{db: db}
 }
 
-// Insert writes records to InfluxDB
+// Insert writes records to InfluxDB with defensive checks
 func (r *InfluxRepo) Insert(ctx context.Context, records []domain.InverterData) error {
+	// CRITICAL: Check for nil client
+	if r.db == nil {
+		return fmt.Errorf("InfluxDB database is nil")
+	}
+	if r.db.Client == nil {
+		return fmt.Errorf("InfluxDB client is nil - database not initialized properly")
+	}
+
 	if len(records) == 0 {
 		return nil
 	}
@@ -35,11 +43,26 @@ func (r *InfluxRepo) Insert(ctx context.Context, records []domain.InverterData) 
 		}
 	}
 
+	if len(points) == 0 {
+		return fmt.Errorf("no valid points to write")
+	}
+
 	// Write with timeout
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	return r.db.Client.WritePoints(ctx, points)
+	// DEFENSIVE: Log before write
+	fmt.Printf("📝 Writing %d points to InfluxDB...\n", len(points))
+
+	err := r.db.Client.WritePoints(ctx, points)
+	if err != nil {
+		// LOG the actual error with details
+		return fmt.Errorf("WritePoints failed: %w (points: %d, db: %s)", 
+			err, len(points), r.db.Database)
+	}
+
+	fmt.Printf("✅ Successfully wrote %d points\n", len(points))
+	return nil
 }
 
 // recordToPoint converts domain model to InfluxDB point
@@ -55,14 +78,14 @@ func (r *InfluxRepo) recordToPoint(record domain.InverterData) *influxdb3.Point 
 	}
 
 	fields := map[string]interface{}{
-		"serial_no":     record.Data.SerialNo,
-		"voltage":       record.Data.Voltage,
-		"power":         record.Data.Power,
-		"frequency":     record.Data.Frequency,
-		"today_energy":  record.Data.TodayEnergy,
-		"total_energy":  record.Data.TotalEnergy,
-		"temperature":   record.Data.Temperature,
-		"fault_code":    record.Data.FaultCode,
+		"serial_no":    record.Data.SerialNo,
+		"voltage":      record.Data.Voltage,
+		"power":        record.Data.Power,
+		"frequency":    record.Data.Frequency,
+		"today_energy": record.Data.TodayEnergy,
+		"total_energy": record.Data.TotalEnergy,
+		"temperature":  record.Data.Temperature,
+		"fault_code":   record.Data.FaultCode,
 	}
 
 	if record.Data.GridVoltage > 0 {
@@ -79,13 +102,18 @@ func (r *InfluxRepo) recordToPoint(record domain.InverterData) *influxdb3.Point 
 
 // Query retrieves records from InfluxDB
 func (r *InfluxRepo) Query(ctx context.Context, filter domain.QueryFilter) ([]domain.InverterData, error) {
+	// CRITICAL: Check for nil client
+	if r.db == nil || r.db.Client == nil {
+		return nil, fmt.Errorf("InfluxDB client is nil - database not initialized")
+	}
+
 	// Build SQL query
 	query := "SELECT * FROM inverter_data WHERE 1=1"
-	
+
 	if filter.DeviceID != "" {
 		query += fmt.Sprintf(" AND device_id = '%s'", filter.DeviceID)
 	}
-	
+
 	if filter.FaultCode != nil {
 		if *filter.FaultCode == 0 {
 			query += " AND fault_code = 0"
@@ -93,25 +121,28 @@ func (r *InfluxRepo) Query(ctx context.Context, filter domain.QueryFilter) ([]do
 			query += " AND fault_code > 0"
 		}
 	}
-	
+
 	if filter.StartTime != nil {
 		query += fmt.Sprintf(" AND time >= '%s'", filter.StartTime.Format(time.RFC3339))
 	}
-	
+
 	if filter.EndTime != nil {
 		query += fmt.Sprintf(" AND time <= '%s'", filter.EndTime.Format(time.RFC3339))
 	}
 
 	query += " ORDER BY time DESC"
-	
+
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
+	// DEFENSIVE: Log query
+	fmt.Printf("🔍 Executing query: %s\n", query)
+
 	// Execute query
 	iterator, err := r.db.Client.Query(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query failed: %w (query: %s)", err, query)
 	}
 
 	// Parse results
@@ -121,15 +152,16 @@ func (r *InfluxRepo) Query(ctx context.Context, filter domain.QueryFilter) ([]do
 		results = append(results, record)
 	}
 
+	fmt.Printf("✅ Query returned %d records\n", len(results))
 	return results, nil
 }
 
 // pointToRecord converts InfluxDB result to domain model
 func (r *InfluxRepo) pointToRecord(value map[string]interface{}) domain.InverterData {
 	record := domain.InverterData{
-		DeviceType: getStringValue(value, "device_type"),
-		DeviceName: getStringValue(value, "device_name"),
-		DeviceID:   getStringValue(value, "device_id"),
+		DeviceType:     getStringValue(value, "device_type"),
+		DeviceName:     getStringValue(value, "device_name"),
+		DeviceID:       getStringValue(value, "device_id"),
 		SignalStrength: getStringValue(value, "signal_strength"),
 	}
 
@@ -154,12 +186,17 @@ func (r *InfluxRepo) pointToRecord(value map[string]interface{}) domain.Inverter
 
 // Count returns number of matching records
 func (r *InfluxRepo) Count(ctx context.Context, filter domain.QueryFilter) (int64, error) {
+	// CRITICAL: Check for nil client
+	if r.db == nil || r.db.Client == nil {
+		return 0, fmt.Errorf("InfluxDB client is nil - database not initialized")
+	}
+
 	query := "SELECT COUNT(*) as count FROM inverter_data WHERE 1=1"
-	
+
 	if filter.DeviceID != "" {
 		query += fmt.Sprintf(" AND device_id = '%s'", filter.DeviceID)
 	}
-	
+
 	if filter.FaultCode != nil {
 		if *filter.FaultCode == 0 {
 			query += " AND fault_code = 0"
@@ -170,12 +207,20 @@ func (r *InfluxRepo) Count(ctx context.Context, filter domain.QueryFilter) (int6
 
 	iterator, err := r.db.Client.Query(ctx, query)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count query failed: %w", err)
 	}
 
 	if iterator.Next() {
-		if count, ok := iterator.Value()["count"].(int64); ok {
+		value := iterator.Value()
+		// Try multiple type assertions for count
+		if count, ok := value["count"].(int64); ok {
 			return count, nil
+		}
+		if count, ok := value["count"].(float64); ok {
+			return int64(count), nil
+		}
+		if count, ok := value["count"].(int); ok {
+			return int64(count), nil
 		}
 	}
 
@@ -187,7 +232,7 @@ func (r *InfluxRepo) Type() string {
 	return "influx"
 }
 
-// Helper functions
+// Helper functions with better type handling
 func getStringValue(data map[string]interface{}, key string) string {
 	if val, ok := data[key].(string); ok {
 		return val
@@ -202,6 +247,8 @@ func getIntValue(data map[string]interface{}, key string) int {
 	case int64:
 		return int(val)
 	case float64:
+		return int(val)
+	case float32:
 		return int(val)
 	default:
 		return 0

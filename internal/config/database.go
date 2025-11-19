@@ -107,19 +107,69 @@ func (m *MongoDatabase) GetType() string {
 	return "mongo"
 }
 
-// InfluxDB initialization
+// InfluxDB initialization with better error handling
 func initInflux(cfg *Config) (*InfluxDatabase, error) {
-	client, err := influxdb3.New(influxdb3.ClientConfig{
+	fmt.Printf("⚡ Initializing InfluxDB v3 Core connection...\n")
+	fmt.Printf("   URL: %s\n", cfg.InfluxURL)
+	fmt.Printf("   Database: %s\n", cfg.InfluxDatabase)
+	fmt.Printf("   Token: %s\n", maskToken(cfg.InfluxToken))
+
+	// Validate configuration
+	if cfg.InfluxURL == "" {
+		return nil, fmt.Errorf("INFLUXDB_URL is required")
+	}
+	if cfg.InfluxDatabase == "" {
+		return nil, fmt.Errorf("INFLUXDB_DATABASE is required")
+	}
+
+	// Create client config
+	clientConfig := influxdb3.ClientConfig{
 		Host:     cfg.InfluxURL,
-		Token:    cfg.InfluxToken,
 		Database: cfg.InfluxDatabase,
 		WriteOptions: &influxdb3.WriteOptions{
-			DefaultTags: map[string]string{},
+			DefaultTags: map[string]string{
+				"source": "solar_monitoring",
+			},
 		},
-	})
+	}
 
+	// Only set token if provided (InfluxDB v3 Core might not need it)
+	if cfg.InfluxToken != "" {
+		clientConfig.Token = cfg.InfluxToken
+	}
+
+	// Create client
+	client, err := influxdb3.New(clientConfig)
 	if err != nil {
-		return nil, fmt.Errorf("influx init failed: %w", err)
+		return nil, fmt.Errorf("influx client creation failed: %w", err)
+	}
+
+	// CRITICAL: Verify client is not nil
+	if client == nil {
+		return nil, fmt.Errorf("influx client is nil after creation")
+	}
+
+	fmt.Printf("✓ InfluxDB client created successfully\n")
+
+	// Test connection with a simple query
+	fmt.Printf("⚡ Testing InfluxDB connection...\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Try a simple SHOW TABLES query
+	testQuery := "SHOW TABLES"
+	iterator, err := client.Query(ctx, testQuery)
+	if err != nil {
+		fmt.Printf("⚠️  Warning: Test query failed: %v\n", err)
+		fmt.Printf("   This might be okay if database is empty\n")
+	} else {
+		fmt.Printf("✓ InfluxDB connection test successful\n")
+		// Count results
+		count := 0
+		for iterator.Next() {
+			count++
+		}
+		fmt.Printf("   Found %d tables\n", count)
 	}
 
 	fmt.Printf("✓ InfluxDB connected: %s\n", cfg.InfluxDatabase)
@@ -139,4 +189,15 @@ func (i *InfluxDatabase) Close() error {
 
 func (i *InfluxDatabase) GetType() string {
 	return "influx"
+}
+
+// Helper to mask token in logs
+func maskToken(token string) string {
+	if token == "" {
+		return "(not set)"
+	}
+	if len(token) <= 8 {
+		return "***"
+	}
+	return token[:4] + "..." + token[len(token)-4:]
 }

@@ -90,6 +90,21 @@ func (r *RawDataRepo) Insert(ctx context.Context, data map[string]interface{}, s
 	return rawID.Hex(), nil
 }
 
+// InsertMany performs a bulk insert of raw records.
+func (r *RawDataRepo) InsertMany(ctx context.Context, raws []RawData) error {
+	if len(raws) == 0 {
+		return nil
+	}
+
+	docs := make([]interface{}, len(raws))
+	for i := range raws {
+		docs[i] = raws[i]
+	}
+
+	_, err := r.collection.InsertMany(ctx, docs)
+	return err
+}
+
 // MarkProcessed marks a raw data record as processed
 func (r *RawDataRepo) MarkProcessed(ctx context.Context, id string) error {
 	objectID, err := toObjectID(id)
