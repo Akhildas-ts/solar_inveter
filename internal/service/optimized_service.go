@@ -265,15 +265,40 @@ func (svc *OptimizedService) convertToRecordOptimized(data map[string]interface{
 		SignalStrength: getStringFast(data, "signal_strength", ""),
 		Timestamp:      timestamp,
 		Data: domain.InverterDetails{
-			SerialNo:    getStringFast(data, "serial_no", "UNKNOWN"),
-			Voltage:     getIntFast(data, "voltage", 0),
-			Power:       getIntFast(data, "power", 0),
-			Frequency:   getIntFast(data, "frequency", 0),
-			TodayEnergy: getIntFast(data, "today_energy", 0),
-			TotalEnergy: getIntFast(data, "total_energy", 0),
-			Temperature: getIntFast(data, "temperature", 0),
-			FaultCode:   getIntFast(data, "fault_code", 0),
-		},
+            SlaveID:   getString(data, "slid", getString(data, "slave_id", "")),
+            SerialNo:  getString(data, "sno", getString(data, "serial_no", "")),
+            ModelName: getString(data, "model", getString(data, "model_name", "")),
+
+            TotalOutputPower: getFloat(data, "p", getFloat(data, "total_output_power", 0)),
+            TotalEnergy:      getFloat(data, "e", getFloat(data, "total_e", 0)),
+            TodayEnergy:      getFloat(data, "te", getFloat(data, "today_e", 0)),
+
+            PV1Voltage: getFloat(data, "pv1v", getFloat(data, "pv1_voltage", 0)),
+            PV1Current: getFloat(data, "pv1c", getFloat(data, "pv1_current", 0)),
+
+            PV2Voltage: getFloat(data, "pv2v", getFloat(data, "pv2_voltage", 0)),
+            PV2Current: getFloat(data, "pv2c", getFloat(data, "pv2_current", 0)),
+
+            PV3Voltage: getFloat(data, "pv3v", 0),
+            PV3Current: getFloat(data, "pv3c", 0),
+            PV4Voltage: getFloat(data, "pv4v", 0),
+            PV4Current: getFloat(data, "pv4c", 0),
+
+            GridVoltageR: getFloat(data, "gvr", getFloat(data, "grid_voltage_r", 0)),
+            GridVoltageS: getFloat(data, "gvs", getFloat(data, "grid_voltage_s", 0)),
+            GridVoltageT: getFloat(data, "gvt", getFloat(data, "grid_voltage_t", 0)),
+
+            GridCurrentR: getFloat(data, "gcr", getFloat(data, "grid_current_r", 0)),
+            GridCurrentS: getFloat(data, "gcs", getFloat(data, "grid_current_s", 0)),
+            GridCurrentT: getFloat(data, "gct", getFloat(data, "grid_current_t", 0)),
+
+            InverterTemp: getFloat(data, "itmp", getFloat(data, "temperature", 0)),
+            Frequency:    getFloat(data, "fr", getFloat(data, "frequency", 0)),
+
+            Alarm1: getInt(data, "al1", 0),
+            Alarm2: getInt(data, "al2", 0),
+            Alarm3: getInt(data, "al3", 0),
+        },
 	}
 }
 

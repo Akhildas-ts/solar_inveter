@@ -14,51 +14,84 @@ type InverterData struct {
 	Timestamp      time.Time       `json:"timestamp" bson:"timestamp"`
 	Data           InverterDetails `json:"data" bson:"data"`
 }
-
-// InverterDetails contains sensor readings (SCALED VALUES)
 type InverterDetails struct {
-	// Identification
-	SerialNo string `json:"serial_no" bson:"serial_no"`
-	SlaveID  string `json:"slave_id,omitempty" bson:"slave_id,omitempty"`
-	Model    string `json:"model,omitempty" bson:"model,omitempty"`
+    SlaveID        string  `json:"slave_id"`
+    SerialNo       string  `json:"serial_no"`
+    ModelName      string  `json:"model_name"`
 
-	// Power & Energy (SCALED)
-	Power       int `json:"power" bson:"power"`               // Watts
-	TodayEnergy int `json:"today_energy" bson:"today_energy"` // Wh
-	TotalEnergy int `json:"total_energy" bson:"total_energy"` // Wh
+    TotalOutputPower float64 `json:"total_output_power"`
+    TotalEnergy      float64 `json:"total_e"`
+    TodayEnergy      float64 `json:"today_e"`
 
-	// PV Strings (SCALED)
-	PV1Voltage int `json:"pv1_voltage,omitempty" bson:"pv1_voltage,omitempty"` // 0.01V precision
-	PV1Current int `json:"pv1_current,omitempty" bson:"pv1_current,omitempty"` // 0.01A precision
-	PV2Voltage int `json:"pv2_voltage,omitempty" bson:"pv2_voltage,omitempty"`
-	PV2Current int `json:"pv2_current,omitempty" bson:"pv2_current,omitempty"`
-	PV3Voltage int `json:"pv3_voltage,omitempty" bson:"pv3_voltage,omitempty"`
-	PV3Current int `json:"pv3_current,omitempty" bson:"pv3_current,omitempty"`
-	PV4Voltage int `json:"pv4_voltage,omitempty" bson:"pv4_voltage,omitempty"`
-	PV4Current int `json:"pv4_current,omitempty" bson:"pv4_current,omitempty"`
+    PV1Voltage float64 `json:"pv1_voltage"`
+    PV1Current float64 `json:"pv1_current"`
+    PV2Voltage float64 `json:"pv2_voltage"`
+    PV2Current float64 `json:"pv2_current"`
+    PV3Voltage float64 `json:"pv3_voltage"`
+    PV3Current float64 `json:"pv3_current"`
+    PV4Voltage float64 `json:"pv4_voltage"`
+    PV4Current float64 `json:"pv4_current"`
 
-	// Grid (SCALED)
-	GridVoltageR int `json:"grid_voltage_r,omitempty" bson:"grid_voltage_r,omitempty"` // 0.01V
-	GridVoltageS int `json:"grid_voltage_s,omitempty" bson:"grid_voltage_s,omitempty"`
-	GridVoltageT int `json:"grid_voltage_t,omitempty" bson:"grid_voltage_t,omitempty"`
-	GridCurrentR int `json:"grid_current_r,omitempty" bson:"grid_current_r,omitempty"` // 0.001A
-	GridCurrentS int `json:"grid_current_s,omitempty" bson:"grid_current_s,omitempty"`
-	GridCurrentT int `json:"grid_current_t,omitempty" bson:"grid_current_t,omitempty"`
+    GridVoltageR float64 `json:"grid_voltage_r"`
+    GridVoltageS float64 `json:"grid_voltage_s"`
+    GridVoltageT float64 `json:"grid_voltage_t"`
 
-	// System (SCALED)
-	Temperature int `json:"temperature" bson:"temperature"` // °C
-	Frequency   int `json:"frequency" bson:"frequency"`     // Hz (0.001 precision)
+    GridCurrentR float64 `json:"grid_current_r"`
+    GridCurrentS float64 `json:"grid_current_s"`
+    GridCurrentT float64 `json:"grid_current_t"`
 
-	// Legacy fields (for backward compatibility)
-	Voltage     int     `json:"voltage,omitempty" bson:"voltage,omitempty"`
-	FaultCode   int     `json:"fault_code,omitempty" bson:"fault_code,omitempty"`
-	GridVoltage float64 `json:"grid_voltage,omitempty" bson:"grid_voltage,omitempty"`
+    InverterTemp float64 `json:"inverter_temp"`
+    Frequency    float64 `json:"frequency"`
 
-	// Alarms
-	Alarm1 int `json:"alarm1,omitempty" bson:"alarm1,omitempty"`
-	Alarm2 int `json:"alarm2,omitempty" bson:"alarm2,omitempty"`
-	Alarm3 int `json:"alarm3,omitempty" bson:"alarm3,omitempty"`
+    Alarm1 int `json:"alarm_1"`
+    Alarm2 int `json:"alarm_2"`
+    Alarm3 int `json:"alarm_3"`
 }
+
+// // InverterDetails contains sensor readings (SCALED VALUES)
+// type InverterDetails struct {
+// 	// Identification
+// 	SerialNo string `json:"serial_no" bson:"serial_no"`
+// 	SlaveID  string `json:"slave_id,omitempty" bson:"slave_id,omitempty"`
+// 	Model    string `json:"model,omitempty" bson:"model,omitempty"`
+
+// 	// Power & Energy (SCALED)
+// 	Power       int `json:"power" bson:"power"`               // Watts
+// 	TodayEnergy int `json:"today_energy" bson:"today_energy"` // Wh
+// 	TotalEnergy int `json:"total_energy" bson:"total_energy"` // Wh
+
+// 	// PV Strings (SCALED)
+// 	PV1Voltage int `json:"pv1_voltage,omitempty" bson:"pv1_voltage,omitempty"` // 0.01V precision
+// 	PV1Current int `json:"pv1_current,omitempty" bson:"pv1_current,omitempty"` // 0.01A precision
+// 	PV2Voltage int `json:"pv2_voltage,omitempty" bson:"pv2_voltage,omitempty"`
+// 	PV2Current int `json:"pv2_current,omitempty" bson:"pv2_current,omitempty"`
+// 	PV3Voltage int `json:"pv3_voltage,omitempty" bson:"pv3_voltage,omitempty"`
+// 	PV3Current int `json:"pv3_current,omitempty" bson:"pv3_current,omitempty"`
+// 	PV4Voltage int `json:"pv4_voltage,omitempty" bson:"pv4_voltage,omitempty"`
+// 	PV4Current int `json:"pv4_current,omitempty" bson:"pv4_current,omitempty"`
+
+// 	// Grid (SCALED)
+// 	GridVoltageR int `json:"grid_voltage_r,omitempty" bson:"grid_voltage_r,omitempty"` // 0.01V
+// 	GridVoltageS int `json:"grid_voltage_s,omitempty" bson:"grid_voltage_s,omitempty"`
+// 	GridVoltageT int `json:"grid_voltage_t,omitempty" bson:"grid_voltage_t,omitempty"`
+// 	GridCurrentR int `json:"grid_current_r,omitempty" bson:"grid_current_r,omitempty"` // 0.001A
+// 	GridCurrentS int `json:"grid_current_s,omitempty" bson:"grid_current_s,omitempty"`
+// 	GridCurrentT int `json:"grid_current_t,omitempty" bson:"grid_current_t,omitempty"`
+
+// 	// System (SCALED)
+// 	Temperature int `json:"temperature" bson:"temperature"` // °C
+// 	Frequency   int `json:"frequency" bson:"frequency"`     // Hz (0.001 precision)
+
+// 	// Legacy fields (for backward compatibility)
+// 	Voltage     int     `json:"voltage,omitempty" bson:"voltage,omitempty"`
+// 	FaultCode   int     `json:"fault_code,omitempty" bson:"fault_code,omitempty"`
+// 	GridVoltage float64 `json:"grid_voltage,omitempty" bson:"grid_voltage,omitempty"`
+
+// 	// Alarms
+// 	Alarm1 int `json:"alarm1,omitempty" bson:"alarm1,omitempty"`
+// 	Alarm2 int `json:"alarm2,omitempty" bson:"alarm2,omitempty"`
+// 	Alarm3 int `json:"alarm3,omitempty" bson:"alarm3,omitempty"`
+// }
 
 // ... rest of the file remains the same (FieldMapping, DataSourceMapping, etc.)
 

@@ -125,37 +125,41 @@ func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 
 	return nil
 }
-
-// processAndStoreUltra uses ultra-fast mapper
 func (svc *Service) processAndStoreUltra(ctx context.Context, rawID string, rawData map[string]interface{}) error {
-	// Detect source (ultra-fast with bitmask checking)
+	// Detect source
 	sourceID := svc.mapper.DetectSourceID(rawData)
 	if sourceID == "" {
 		return fmt.Errorf("unknown data source")
 	}
 
-	// Map fields (zero-allocation path with pre-compiled scale functions)
+	// Step 1: Map fields to STANDARD format
 	standardized, err := svc.mapper.MapFields(sourceID, rawData)
 	if err != nil {
 		return fmt.Errorf("mapping failed: %w", err)
 	}
 
-	// Add metadata
+	// Step 2: Convert standardized → SHORT KEYS (YOUR EXPECTED FORMAT)
+	standardized = normalizeShortKeys(standardized)  // 🔥 IMPORTANT
+
+	// Step 3: Add metadata
 	standardized["device_type"] = sourceID
 	standardized["raw_id"] = rawID
+
 	if requestID, ok := rawData["request_id"].(string); ok && requestID != "" {
 		standardized["request_id"] = requestID
 	} else {
 		standardized["request_id"] = rawID
 	}
+
 	if deviceName, ok := rawData["device_name"].(string); ok {
 		standardized["device_name"] = deviceName
 	}
+
 	if deviceID, ok := rawData["device_id"].(string); ok {
 		standardized["device_id"] = deviceID
 	}
 
-	// Parse timestamp
+	// Step 4: Parse timestamp
 	timestamp := time.Now()
 	if ts, ok := rawData["device_timestamp"].(string); ok {
 		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
@@ -163,13 +167,59 @@ func (svc *Service) processAndStoreUltra(ctx context.Context, rawID string, rawD
 		}
 	}
 
-	// Convert to domain model
+	// Step 5: Convert to domain model
 	record := svc.convertToRecord(standardized, timestamp)
 
-	// Add to batch
+	// Step 6: Add to batch
 	svc.batch.Add(record)
-
 	return nil
+}
+
+var shortKeyMap = map[string]string{
+	"slave_id": "slid",
+	"serial_no": "sno",
+	"model": "model",
+
+	"power": "p",
+	"total_energy": "e",
+	"today_energy": "te",
+
+	"pv1_voltage": "pv1v",
+	"pv1_current": "pv1c",
+	"pv2_voltage": "pv2v",
+	"pv2_current": "pv2c",
+	"pv3_voltage": "pv3v",
+	"pv3_current": "pv3c",
+	"pv4_voltage": "pv4v",
+	"pv4_current": "pv4c",
+
+	"grid_voltage_r": "gvr",
+	"grid_voltage_s": "gvs",
+	"grid_voltage_t": "gvt",
+	"grid_current_r": "gcr",
+	"grid_current_s": "gcs",
+	"grid_current_t": "gct",
+
+	"temperature": "itmp",
+	"frequency": "fr",
+
+	"alarm1": "al1",
+	"alarm2": "al2",
+	"alarm3": "al3",
+}
+
+func normalizeShortKeys(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+
+	for key, val := range in {
+		if short, ok := shortKeyMap[key]; ok {
+			out[short] = val
+		} else {
+			out[key] = val
+		}
+	}
+
+	return out
 }
 
 // processRawDataLoop periodically processes unprocessed raw data
@@ -395,27 +445,53 @@ func (svc *Service) ReprocessRawData(ctx context.Context, rawID string) error {
 	logger.Info(fmt.Sprintf("Marked raw_id=%s for reprocessing", rawID))
 	return nil
 }
-
-// convertToRecord converts standardized map to domain model
 func (svc *Service) convertToRecord(data map[string]interface{}, timestamp time.Time) domain.InverterData {
-	return domain.InverterData{
-		DeviceType:     getString(data, "device_type", "unknown"),
-		DeviceName:     getString(data, "device_name", "unknown"),
-		DeviceID:       getString(data, "device_id", "unknown"),
-		SignalStrength: getString(data, "signal_strength", ""),
-		Timestamp:      timestamp,
-		Data: domain.InverterDetails{
-			SerialNo:    getString(data, "serial_no", "UNKNOWN"),
-			Voltage:     getInt(data, "voltage", 0),
-			Power:       getInt(data, "power", 0),
-			Frequency:   getInt(data, "frequency", 0),
-			TodayEnergy: getInt(data, "today_energy", 0),
-			TotalEnergy: getInt(data, "total_energy", 0),
-			Temperature: getInt(data, "temperature", 0),
-			FaultCode:   getInt(data, "fault_code", 0),
-		},
-	}
+
+    return domain.InverterData{
+        DeviceType:     getString(data, "device_type", ""),
+        DeviceName:     getString(data, "device_name", ""),
+        DeviceID:       getString(data, "device_id", ""),
+        SignalStrength: getString(data, "signal_strength", ""),
+        Timestamp:      timestamp,
+
+        Data: domain.InverterDetails{
+            SlaveID:   getString(data, "slid", getString(data, "slave_id", "")),
+            SerialNo:  getString(data, "sno", getString(data, "serial_no", "")),
+            ModelName: getString(data, "model", getString(data, "model_name", "")),
+
+            TotalOutputPower: getFloat(data, "p", getFloat(data, "total_output_power", 0)),
+            TotalEnergy:      getFloat(data, "e", getFloat(data, "total_e", 0)),
+            TodayEnergy:      getFloat(data, "te", getFloat(data, "today_e", 0)),
+
+            PV1Voltage: getFloat(data, "pv1v", getFloat(data, "pv1_voltage", 0)),
+            PV1Current: getFloat(data, "pv1c", getFloat(data, "pv1_current", 0)),
+
+            PV2Voltage: getFloat(data, "pv2v", getFloat(data, "pv2_voltage", 0)),
+            PV2Current: getFloat(data, "pv2c", getFloat(data, "pv2_current", 0)),
+
+            PV3Voltage: getFloat(data, "pv3v", 0),
+            PV3Current: getFloat(data, "pv3c", 0),
+            PV4Voltage: getFloat(data, "pv4v", 0),
+            PV4Current: getFloat(data, "pv4c", 0),
+
+            GridVoltageR: getFloat(data, "gvr", getFloat(data, "grid_voltage_r", 0)),
+            GridVoltageS: getFloat(data, "gvs", getFloat(data, "grid_voltage_s", 0)),
+            GridVoltageT: getFloat(data, "gvt", getFloat(data, "grid_voltage_t", 0)),
+
+            GridCurrentR: getFloat(data, "gcr", getFloat(data, "grid_current_r", 0)),
+            GridCurrentS: getFloat(data, "gcs", getFloat(data, "grid_current_s", 0)),
+            GridCurrentT: getFloat(data, "gct", getFloat(data, "grid_current_t", 0)),
+
+            InverterTemp: getFloat(data, "itmp", getFloat(data, "temperature", 0)),
+            Frequency:    getFloat(data, "fr", getFloat(data, "frequency", 0)),
+
+            Alarm1: getInt(data, "al1", 0),
+            Alarm2: getInt(data, "al2", 0),
+            Alarm3: getInt(data, "al3", 0),
+        },
+    }
 }
+
 
 // reportStats prints statistics periodically
 func (svc *Service) reportStats() {

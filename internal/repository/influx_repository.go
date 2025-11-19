@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 	"solar_project/internal/config"
 	"solar_project/internal/domain"
+
+	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 )
 
 // InfluxRepo implements Repository for InfluxDB
@@ -57,7 +58,7 @@ func (r *InfluxRepo) Insert(ctx context.Context, records []domain.InverterData) 
 	err := r.db.Client.WritePoints(ctx, points)
 	if err != nil {
 		// LOG the actual error with details
-		return fmt.Errorf("WritePoints failed: %w (points: %d, db: %s)", 
+		return fmt.Errorf("WritePoints failed: %w (points: %d, db: %s)",
 			err, len(points), r.db.Database)
 	}
 
@@ -78,18 +79,31 @@ func (r *InfluxRepo) recordToPoint(record domain.InverterData) *influxdb3.Point 
 	}
 
 	fields := map[string]interface{}{
-		"serial_no":    record.Data.SerialNo,
-		"voltage":      record.Data.Voltage,
-		"power":        record.Data.Power,
-		"frequency":    record.Data.Frequency,
-		"today_energy": record.Data.TodayEnergy,
-		"total_energy": record.Data.TotalEnergy,
-		"temperature":  record.Data.Temperature,
-		"fault_code":   record.Data.FaultCode,
-	}
-
-	if record.Data.GridVoltage > 0 {
-		fields["grid_voltage"] = record.Data.GridVoltage
+		"serial_no":          record.Data.SerialNo,
+		"slave_id":           record.Data.SlaveID,
+		"model_name":         record.Data.ModelName,
+		"total_output_power": record.Data.TotalOutputPower,
+		"total_e":            record.Data.TotalEnergy,
+		"today_e":            record.Data.TodayEnergy,
+		"pv1_voltage":        record.Data.PV1Voltage,
+		"pv1_current":        record.Data.PV1Current,
+		"pv2_voltage":        record.Data.PV2Voltage,
+		"pv2_current":        record.Data.PV2Current,
+		"pv3_voltage":        record.Data.PV3Voltage,
+		"pv3_current":        record.Data.PV3Current,
+		"pv4_voltage":        record.Data.PV4Voltage,
+		"pv4_current":        record.Data.PV4Current,
+		"grid_voltage_r":     record.Data.GridVoltageR,
+		"grid_voltage_s":     record.Data.GridVoltageS,
+		"grid_voltage_t":     record.Data.GridVoltageT,
+		"grid_current_r":     record.Data.GridCurrentR,
+		"grid_current_s":     record.Data.GridCurrentS,
+		"grid_current_t":     record.Data.GridCurrentT,
+		"inverter_temp":      record.Data.InverterTemp,
+		"frequency":          record.Data.Frequency,
+		"alarm_1":            record.Data.Alarm1,
+		"alarm_2":            record.Data.Alarm2,
+		"alarm_3":            record.Data.Alarm3,
 	}
 
 	return influxdb3.NewPoint(
@@ -170,15 +184,31 @@ func (r *InfluxRepo) pointToRecord(value map[string]interface{}) domain.Inverter
 	}
 
 	record.Data = domain.InverterDetails{
-		SerialNo:    getStringValue(value, "serial_no"),
-		Voltage:     getIntValue(value, "voltage"),
-		Power:       getIntValue(value, "power"),
-		Frequency:   getIntValue(value, "frequency"),
-		TodayEnergy: getIntValue(value, "today_energy"),
-		TotalEnergy: getIntValue(value, "total_energy"),
-		Temperature: getIntValue(value, "temperature"),
-		FaultCode:   getIntValue(value, "fault_code"),
-		GridVoltage: getFloatValue(value, "grid_voltage"),
+		SlaveID:          getStringValue(value, "slave_id"),
+		SerialNo:         getStringValue(value, "serial_no"),
+		ModelName:        getStringValue(value, "model_name"),
+		TotalOutputPower: getFloatValue(value, "total_output_power"),
+		TotalEnergy:      getFloatValue(value, "total_e"),
+		TodayEnergy:      getFloatValue(value, "today_e"),
+		PV1Voltage:       getFloatValue(value, "pv1_voltage"),
+		PV1Current:       getFloatValue(value, "pv1_current"),
+		PV2Voltage:       getFloatValue(value, "pv2_voltage"),
+		PV2Current:       getFloatValue(value, "pv2_current"),
+		PV3Voltage:       getFloatValue(value, "pv3_voltage"),
+		PV3Current:       getFloatValue(value, "pv3_current"),
+		PV4Voltage:       getFloatValue(value, "pv4_voltage"),
+		PV4Current:       getFloatValue(value, "pv4_current"),
+		GridVoltageR:     getFloatValue(value, "grid_voltage_r"),
+		GridVoltageS:     getFloatValue(value, "grid_voltage_s"),
+		GridVoltageT:     getFloatValue(value, "grid_voltage_t"),
+		GridCurrentR:     getFloatValue(value, "grid_current_r"),
+		GridCurrentS:     getFloatValue(value, "grid_current_s"),
+		GridCurrentT:     getFloatValue(value, "grid_current_t"),
+		InverterTemp:     getFloatValue(value, "inverter_temp"),
+		Frequency:        getFloatValue(value, "frequency"),
+		Alarm1:           getIntValue(value, "alarm_1"),
+		Alarm2:           getIntValue(value, "alarm_2"),
+		Alarm3:           getIntValue(value, "alarm_3"),
 	}
 
 	return record
