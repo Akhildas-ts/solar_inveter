@@ -1,4 +1,6 @@
 // internal/service/ultra_mapper.go
+// FINAL VERSION - Stores scaled values correctly
+
 package service
 
 import (
@@ -20,25 +22,25 @@ import (
 // ScaleFunc is a pre-compiled scaling function (zero allocation)
 type ScaleFunc func(int) int
 
-// Pre-compiled scale functions
+// Pre-compiled scale functions (THESE DO THE ACTUAL CONVERSION)
 var (
-	ScalePowerMW    = func(v int) int { return v / 1000 }  // milliwatts → watts
-	ScaleEnergy100  = func(v int) int { return v / 100 }   // 0.01 units → whole
-	ScaleVoltage10  = func(v int) int { return v / 10 }    // decivolts → volts
-	ScaleCurrentMA  = func(v int) int { return v / 1000 }  // milliamps → amps
-	ScaleTemp10     = func(v int) int { return v / 10 }    // 0.1°C → °C
-	ScaleFreq100    = func(v int) int { return v / 100 }   // 0.01 Hz → Hz
-	ScaleFreq1000   = func(v int) int { return v / 1000 }  // 0.001 Hz → Hz
+	ScalePowerMW    = func(v int) int { return v / 1000 }  // 3432000 → 3432 W
+	ScaleEnergy1000 = func(v int) int { return v / 1000 }  // 110130000 → 110130 Wh
+	ScaleVoltage100 = func(v int) int { return v / 100 }   // 45640 → 456 V (0.01V units)
+	ScaleCurrent100 = func(v int) int { return v / 100 }   // 36000 → 360 A (0.01A units)
+	ScaleTemp10     = func(v int) int { return v / 10 }    // 530 → 53°C
+	ScaleFreq1000   = func(v int) int { return v / 1000 }  // 499900 → 499 Hz (0.001Hz)
 	ScaleNone       = func(v int) int { return v }         // No scaling
 )
 
-// UltraFieldSpec - Optimized field with pre-compiled scale function
+// UltraFieldSpec - Field with pre-compiled scale function
 type UltraFieldSpec struct {
 	SourceKey  string
 	TargetName string
 	Scale      ScaleFunc
 	Required   bool
 	DefaultVal int
+	IsString   bool // NEW: Track if field is string (don't scale)
 }
 
 // UltraMapping - Cache-friendly mapping
@@ -46,7 +48,7 @@ type UltraMapping struct {
 	SourceID     string
 	NestedPath   string
 	Fields       []UltraFieldSpec
-	RequiredKeys map[string]bool // For fast required check
+	RequiredKeys map[string]bool
 }
 
 // UltraMapper - Maximum performance mapper
@@ -57,7 +59,6 @@ type UltraMapper struct {
 	stopReload chan struct{}
 }
 
-// NewUltraMapper creates the highest-performance mapper
 func NewUltraMapper(db *config.MongoDatabase) (*UltraMapper, error) {
 	m := &UltraMapper{
 		mappings:   make(map[string]*UltraMapping),
@@ -90,7 +91,6 @@ func NewUltraMapper(db *config.MongoDatabase) (*UltraMapper, error) {
 	return m, nil
 }
 
-// Load mappings and pre-compile everything
 func (m *UltraMapper) Load() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -119,7 +119,6 @@ func (m *UltraMapper) Load() error {
 	return nil
 }
 
-// compileUltra - Compile to fastest possible representation
 func (m *UltraMapper) compileUltra(src *domain.DataSourceMapping) *UltraMapping {
 	ultra := &UltraMapping{
 		SourceID:     src.SourceID,
@@ -135,6 +134,7 @@ func (m *UltraMapper) compileUltra(src *domain.DataSourceMapping) *UltraMapping 
 			Required:   field.Required,
 			DefaultVal: getDefaultInt(field.DefaultValue),
 			Scale:      compileScaleFunc(field.Transform),
+			IsString:   field.DataType == "string", // NEW
 		}
 
 		ultra.Fields = append(ultra.Fields, spec)
@@ -147,7 +147,6 @@ func (m *UltraMapper) compileUltra(src *domain.DataSourceMapping) *UltraMapping 
 	return ultra
 }
 
-// compileScaleFunc - Choose the optimal pre-compiled function
 func compileScaleFunc(transform string) ScaleFunc {
 	if transform == "" {
 		return ScaleNone
@@ -161,24 +160,23 @@ func compileScaleFunc(transform string) ScaleFunc {
 
 	// Return pre-compiled functions for common cases
 	switch {
-	case op == "multiply" && val == 0.001:
-		return ScaleCurrentMA
-	case op == "multiply" && val == 0.01:
-		return ScaleEnergy100
-	case op == "multiply" && val == 0.1:
-		return ScaleVoltage10
 	case op == "divide" && val == 1000:
-		return ScaleCurrentMA
+		return ScalePowerMW
 	case op == "divide" && val == 100:
-		return ScaleEnergy100
+		return ScaleVoltage100
 	case op == "divide" && val == 10:
-		return ScaleVoltage10
+		return ScaleTemp10
+	case op == "multiply" && val == 0.001:
+		return ScalePowerMW
+	case op == "multiply" && val == 0.01:
+		return ScaleVoltage100
+	case op == "multiply" && val == 0.1:
+		return ScaleTemp10
 	default:
 		return compileCustomScale(op, val)
 	}
 }
 
-// compileCustomScale - For non-standard scales
 func compileCustomScale(op string, val float64) ScaleFunc {
 	switch op {
 	case "multiply":
@@ -199,12 +197,10 @@ func compileCustomScale(op string, val float64) ScaleFunc {
 	return ScaleNone
 }
 
-// DetectSourceID - Fast detection
 func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Fast path: explicit hints
 	if sid, ok := data["source_id"].(string); ok {
 		if _, exists := m.mappings[sid]; exists {
 			return sid
@@ -216,7 +212,6 @@ func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 		}
 	}
 
-	// Extract all keys once
 	allKeys := make(map[string]bool, len(data)*2)
 	for key := range data {
 		allKeys[key] = true
@@ -227,12 +222,10 @@ func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 		}
 	}
 
-	// Find best match
 	bestMatch := ""
 	bestScore := 0
 
 	for sourceID, mapping := range m.mappings {
-		// Check all required fields present
 		allRequiredPresent := true
 		for reqKey := range mapping.RequiredKeys {
 			if !allKeys[reqKey] {
@@ -245,7 +238,6 @@ func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 			continue
 		}
 
-		// Count matching fields
 		matchCount := 0
 		for _, field := range mapping.Fields {
 			if allKeys[field.SourceKey] {
@@ -253,7 +245,6 @@ func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 			}
 		}
 
-		// 40% threshold
 		threshold := len(mapping.Fields) * 2 / 5
 		if matchCount > bestScore && matchCount >= threshold {
 			bestScore = matchCount
@@ -264,7 +255,7 @@ func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 	return bestMatch
 }
 
-// MapFields - High-performance mapping
+// MapFields - CRITICAL FIX: Handle both strings and integers
 func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (map[string]interface{}, error) {
 	m.mu.RLock()
 	mapping, exists := m.mappings[sourceID]
@@ -274,7 +265,6 @@ func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (m
 		return nil, fmt.Errorf("mapping not found: %s", sourceID)
 	}
 
-	// Get data source
 	dataSource := data
 	if mapping.NestedPath != "" {
 		if nested, ok := data[mapping.NestedPath].(map[string]interface{}); ok {
@@ -282,42 +272,54 @@ func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (m
 		}
 	}
 
-	// Build result
 	result := make(map[string]interface{}, len(mapping.Fields))
 	
 	for _, spec := range mapping.Fields {
-		// Extract value
-		rawVal := extractIntFast(dataSource, data, spec.SourceKey)
+		// Get raw value
+		rawValue := extractValue(dataSource, data, spec.SourceKey)
 		
 		// Check required
-		if rawVal == 0 && spec.Required {
-			if _, exists := dataSource[spec.SourceKey]; !exists {
-				if _, exists := data[spec.SourceKey]; !exists {
-					return nil, fmt.Errorf("required field missing: %s", spec.SourceKey)
-				}
-			}
+		if rawValue == nil && spec.Required {
+			return nil, fmt.Errorf("required field missing: %s", spec.SourceKey)
 		}
 		
-		// Apply scale (FASTEST PATH - direct function call)
-		scaledVal := spec.Scale(rawVal)
-		result[spec.TargetName] = scaledVal
+		if rawValue == nil {
+			if spec.DefaultVal != 0 {
+				result[spec.TargetName] = spec.DefaultVal
+			}
+			continue
+		}
+
+		// CRITICAL: Handle strings vs integers differently
+		if spec.IsString {
+			// Store strings as-is
+			if str, ok := rawValue.(string); ok {
+				result[spec.TargetName] = str
+			} else {
+				result[spec.TargetName] = fmt.Sprintf("%v", rawValue)
+			}
+		} else {
+			// Scale integers
+			intVal := fastToInt(rawValue)
+			scaledVal := spec.Scale(intVal)
+			result[spec.TargetName] = scaledVal
+		}
 	}
 
 	return result, nil
 }
 
-// extractIntFast - Fast integer extraction
-func extractIntFast(dataSource, fallback map[string]interface{}, key string) int {
+// extractValue - Get raw value (interface{})
+func extractValue(dataSource, fallback map[string]interface{}, key string) interface{} {
 	if val, ok := dataSource[key]; ok {
-		return fastToInt(val)
+		return val
 	}
 	if val, ok := fallback[key]; ok {
-		return fastToInt(val)
+		return val
 	}
-	return 0
+	return nil
 }
 
-// fastToInt - Quick conversion
 func fastToInt(val interface{}) int {
 	switch v := val.(type) {
 	case int:
@@ -333,53 +335,55 @@ func fastToInt(val interface{}) int {
 	}
 }
 
-// seedUltraDefaults - FoxESS mapping
 func (m *UltraMapper) seedUltraDefaults() error {
 	defaults := []domain.DataSourceMapping{
 		{
-			SourceID:    "current_format",
-			Description: "Legacy format",
-			NestedPath:  "data",
-			Mappings: []domain.FieldMapping{
-				{SourceField: "serial_no", StandardField: "serial_no", DataType: "string", DefaultValue: "UNKNOWN"},
-				{SourceField: "s1v", StandardField: "voltage", DataType: "int"},
-				{SourceField: "total_output_power", StandardField: "power", DataType: "int"},
-				{SourceField: "f", StandardField: "frequency", DataType: "int"},
-				{SourceField: "today_e", StandardField: "today_energy", DataType: "int"},
-				{SourceField: "total_e", StandardField: "total_energy", DataType: "int"},
-				{SourceField: "inv_temp", StandardField: "temperature", DataType: "int"},
-				{SourceField: "fault_code", StandardField: "fault_code", DataType: "int"},
-			},
-			Active:    true,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
-		{
 			SourceID:    "Inv",
-			Description: "FoxESS Inverter (Ultra-Optimized)",
+			Description: "FoxESS Inverter (Ultra-Optimized with Correct Scaling)",
 			NestedPath:  "data",
 			Mappings: []domain.FieldMapping{
+				// STRING FIELDS (no scaling)
 				{SourceField: "sno", StandardField: "serial_no", DataType: "string", Required: true},
-				{SourceField: "slid", StandardField: "slave_id", DataType: "int"},
+				{SourceField: "slid", StandardField: "slave_id", DataType: "string"},
+				{SourceField: "model", StandardField: "model", DataType: "string"},
+				
+				// INTEGER FIELDS (with scaling)
+				// Power: 3432000 → 3432 W
 				{SourceField: "p", StandardField: "power", DataType: "int", Transform: "divide:1000"},
+				
+				// Energy: 110130000 → 110130 Wh, 418000 → 418 Wh
 				{SourceField: "e", StandardField: "today_energy", DataType: "int", Transform: "divide:1000"},
 				{SourceField: "te", StandardField: "total_energy", DataType: "int", Transform: "divide:1000"},
+				
+				// PV Voltages: 45640 → 456 V (0.01V precision)
 				{SourceField: "pv1v", StandardField: "pv1_voltage", DataType: "int", Transform: "divide:100"},
 				{SourceField: "pv2v", StandardField: "pv2_voltage", DataType: "int", Transform: "divide:100"},
 				{SourceField: "pv3v", StandardField: "pv3_voltage", DataType: "int", Transform: "divide:100"},
 				{SourceField: "pv4v", StandardField: "pv4_voltage", DataType: "int", Transform: "divide:100"},
+				
+				// PV Currents: 36000 → 360 A (0.01A precision)
 				{SourceField: "pv1c", StandardField: "pv1_current", DataType: "int", Transform: "divide:100"},
 				{SourceField: "pv2c", StandardField: "pv2_current", DataType: "int", Transform: "divide:100"},
 				{SourceField: "pv3c", StandardField: "pv3_current", DataType: "int", Transform: "divide:100"},
 				{SourceField: "pv4c", StandardField: "pv4_current", DataType: "int", Transform: "divide:100"},
+				
+				// Grid Voltages: 25130 → 251 V (0.01V precision)
 				{SourceField: "gvr", StandardField: "grid_voltage_r", DataType: "int", Transform: "divide:100"},
 				{SourceField: "gvs", StandardField: "grid_voltage_s", DataType: "int", Transform: "divide:100"},
 				{SourceField: "gvt", StandardField: "grid_voltage_t", DataType: "int", Transform: "divide:100"},
+				
+				// Grid Currents: 4670000 → 4670 A (0.001A precision)
 				{SourceField: "gcr", StandardField: "grid_current_r", DataType: "int", Transform: "divide:1000"},
 				{SourceField: "gcs", StandardField: "grid_current_s", DataType: "int", Transform: "divide:1000"},
 				{SourceField: "gct", StandardField: "grid_current_t", DataType: "int", Transform: "divide:1000"},
+				
+				// Temperature: 530 → 53°C
 				{SourceField: "itmp", StandardField: "temperature", DataType: "int", Transform: "divide:10"},
+				
+				// Frequency: 499900 → 499 Hz (0.001Hz precision)
 				{SourceField: "fr", StandardField: "frequency", DataType: "int", Transform: "divide:1000"},
+				
+				// Alarms (no scaling)
 				{SourceField: "al1", StandardField: "alarm1", DataType: "int", DefaultValue: 0},
 				{SourceField: "al2", StandardField: "alarm2", DataType: "int", DefaultValue: 0},
 				{SourceField: "al3", StandardField: "alarm3", DataType: "int", DefaultValue: 0},
@@ -397,6 +401,13 @@ func (m *UltraMapper) seedUltraDefaults() error {
 		count, _ := m.collection.CountDocuments(ctx, bson.M{"source_id": mapping.SourceID})
 		if count == 0 {
 			m.collection.InsertOne(ctx, mapping)
+			logger.Info(fmt.Sprintf("Created mapping for source_id: %s", mapping.SourceID))
+		} else {
+			// UPDATE existing mapping
+			filter := bson.M{"source_id": mapping.SourceID}
+			update := bson.M{"$set": mapping}
+			m.collection.UpdateOne(ctx, filter, update)
+			logger.Info(fmt.Sprintf("Updated mapping for source_id: %s", mapping.SourceID))
 		}
 	}
 
