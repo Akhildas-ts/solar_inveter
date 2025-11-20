@@ -169,36 +169,36 @@ func (m *OptimizedMapper) compile(src *domain.DataSourceMapping) *CompiledMappin
 	return compiled
 }
 
-// parseScaleFactor converts transform string to float multiplier
-func parseScaleFactor(transform string) float64 {
-	if transform == "" {
-		return 1.0
-	}
+// // parseScaleFactor converts transform string to float multiplier
+// func parseScaleFactor(transform string) float64 {
+// 	if transform == "" {
+// 		return 1.0
+// 	}
 
-	var operation string
-	var value float64
+// 	var operation string
+// 	var value float64
 	
-	// Parse "multiply:1000" or "divide:100"
-	if n, _ := fmt.Sscanf(transform, "%s:%f", &operation, &value); n != 2 {
-		return 1.0
-	}
+// 	// Parse "multiply:1000" or "divide:100"
+// 	if n, _ := fmt.Sscanf(transform, "%s:%f", &operation, &value); n != 2 {
+// 		return 1.0
+// 	}
 
-	switch operation {
-	case "multiply":
-		return value
-	case "divide":
-		if value != 0 {
-			return 1.0 / value
-		}
-	case "add":
-		// Store as negative multiplier for addition (handled in apply)
-		return -value
-	case "subtract":
-		return -value
-	}
+// 	switch operation {
+// 	case "multiply":
+// 		return value
+// 	case "divide":
+// 		if value != 0 {
+// 			return 1.0 / value
+// 		}
+// 	case "add":
+// 		// Store as negative multiplier for addition (handled in apply)
+// 		return -value
+// 	case "subtract":
+// 		return -value
+// 	}
 
-	return 1.0
-}
+// 	return 1.0
+// }
 
 // DetectSourceID - Optimized with pre-allocated buffers
 func (m *OptimizedMapper) DetectSourceID(data map[string]interface{}) string {

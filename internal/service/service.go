@@ -21,7 +21,7 @@ import (
 type Service struct {
 	cfg    *config.Config
 	repo   repository.Repository
-	mapper *UltraMapper  // Using ultra-fast mapper
+	mapper *UltraMapper // Using ultra-fast mapper
 	batch  *BatchWriter
 
 	rawRepo *repository.RawDataRepo
@@ -45,7 +45,7 @@ func NewService(db config.Database, cfg *config.Config) *Service {
 	case "mongo":
 		mongoDb := db.(*config.MongoDatabase)
 		repo = repository.NewMongoRepo(mongoDb)
-		
+
 		// Try to create UltraMapper, fallback to original on error
 		mapper, err = NewUltraMapper(mongoDb)
 		if err != nil {
@@ -53,9 +53,9 @@ func NewService(db config.Database, cfg *config.Config) *Service {
 			// Fallback: create basic mapper or handle error
 			panic(err) // Or handle gracefully
 		}
-		
+
 		rawRepo = repository.NewRawDataRepo(mongoDb)
-		
+
 	case "influx":
 		influxDb := db.(*config.InfluxDatabase)
 		repo = repository.NewInfluxRepo(influxDb)
@@ -80,11 +80,11 @@ func NewService(db config.Database, cfg *config.Config) *Service {
 
 	logger.Info(fmt.Sprintf("Service initialized with UltraMapper (DB: %s, Batch: %d, ZeroCost: enabled)",
 		db.GetType(), cfg.BatchSize))
-	
+
 	return svc
 }
 
-// ProcessData handles incoming data with ultra-fast mapping
+// ProcessData - Fixed version that properly stores data
 func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 	atomic.AddUint64(&svc.receivedCount, 1)
 
@@ -93,7 +93,7 @@ func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 
 	requestID := ensureRequestIDZero(rawData)
 
-	// STEP 1: Store raw data (using existing RawDataRepo.Insert)
+	// STEP 1: Store raw data
 	rawID, err := svc.rawRepo.Insert(ctx, rawData, "", requestID)
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to store raw data (request_id=%s): %v", requestID, err))
@@ -102,9 +102,8 @@ func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 	}
 	atomic.AddUint64(&svc.rawCount, 1)
 
-	// STEP 2: Process with ultra mapper
-	if err := svc.processAndStoreUltra(ctx, rawID, rawData); err != nil {
-		// Mark error in raw data
+	// STEP 2: Process and store
+	if err := svc.processAndStore(ctx, rawID, rawData, requestID); err != nil {
 		if markErr := svc.rawRepo.MarkError(ctx, rawID, err.Error()); markErr != nil {
 			logger.Error(fmt.Sprintf("Failed to mark raw data error: %v", markErr))
 		}
@@ -113,7 +112,7 @@ func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 		if svc.cfg.StrictMode {
 			return err
 		}
-		logger.Warn(fmt.Sprintf("Processing failed for raw_id=%s (non-strict mode): %v", rawID, err))
+		logger.Warn(fmt.Sprintf("Processing failed for raw_id=%s (non-strict): %v", rawID, err))
 		return nil
 	}
 
@@ -125,41 +124,30 @@ func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 
 	return nil
 }
-func (svc *Service) processAndStoreUltra(ctx context.Context, rawID string, rawData map[string]interface{}) error {
-	// Detect source
+
+// processAndStore - Map, convert, and store
+func (svc *Service) processAndStore(ctx context.Context, rawID string, rawData map[string]interface{}, requestID string) error {
+	// STEP 1: Detect source
 	sourceID := svc.mapper.DetectSourceID(rawData)
 	if sourceID == "" {
 		return fmt.Errorf("unknown data source")
 	}
 
-	// Step 1: Map fields to STANDARD format
-	standardized, err := svc.mapper.MapFields(sourceID, rawData)
+	// STEP 2: Map fields (scales integers)
+	mapped, err := svc.mapper.MapFields(sourceID, rawData)
 	if err != nil {
 		return fmt.Errorf("mapping failed: %w", err)
 	}
 
-	// Step 2: Convert standardized → SHORT KEYS (YOUR EXPECTED FORMAT)
-	standardized = normalizeShortKeys(standardized)  // 🔥 IMPORTANT
+	logger.Debug(fmt.Sprintf("Mapped %d fields from source %s", len(mapped), sourceID))
 
-	// Step 3: Add metadata
-	standardized["device_type"] = sourceID
-	standardized["raw_id"] = rawID
+	// STEP 3: Extract device metadata
+	deviceType := sourceID
+	deviceName := getString(rawData, "device_name", "unknown")
+	deviceID := getString(rawData, "device_id", "unknown")
+	signalStrength := getString(rawData, "signal_strength", "")
 
-	if requestID, ok := rawData["request_id"].(string); ok && requestID != "" {
-		standardized["request_id"] = requestID
-	} else {
-		standardized["request_id"] = rawID
-	}
-
-	if deviceName, ok := rawData["device_name"].(string); ok {
-		standardized["device_name"] = deviceName
-	}
-
-	if deviceID, ok := rawData["device_id"].(string); ok {
-		standardized["device_id"] = deviceID
-	}
-
-	// Step 4: Parse timestamp
+	// STEP 4: Parse timestamp
 	timestamp := time.Now()
 	if ts, ok := rawData["device_timestamp"].(string); ok {
 		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
@@ -167,20 +155,70 @@ func (svc *Service) processAndStoreUltra(ctx context.Context, rawID string, rawD
 		}
 	}
 
-	// Step 5: Convert to domain model
-	record := svc.convertToRecord(standardized, timestamp)
+	// STEP 5: Convert mapped data to domain model
+	record := domain.InverterData{
+		DeviceType:     deviceType,
+		DeviceName:     deviceName,
+		DeviceID:       deviceID,
+		SignalStrength: signalStrength,
+		Timestamp:      timestamp,
+		Data: domain.InverterDetails{
+			// Extract from mapped data (which has been scaled)
+			SlaveID:   getString(mapped, "slave_id", ""),
+			SerialNo:  getString(mapped, "serial_no", ""),
+			ModelName: getString(mapped, "model_name", ""),
 
-	// Step 6: Add to batch
+			TotalOutputPower: getFloat(mapped, "total_output_power", 0),
+			TotalEnergy:      getFloat(mapped, "total_e", 0),
+			TodayEnergy:      getFloat(mapped, "today_e", 0),
+
+			PV1Voltage: getFloat(mapped, "pv1_voltage", 0),
+			PV1Current: getFloat(mapped, "pv1_current", 0),
+			PV2Voltage: getFloat(mapped, "pv2_voltage", 0),
+			PV2Current: getFloat(mapped, "pv2_current", 0),
+			PV3Voltage: getFloat(mapped, "pv3_voltage", 0),
+			PV3Current: getFloat(mapped, "pv3_current", 0),
+			PV4Voltage: getFloat(mapped, "pv4_voltage", 0),
+			PV4Current: getFloat(mapped, "pv4_current", 0),
+
+			GridVoltageR: getFloat(mapped, "grid_voltage_r", 0),
+			GridVoltageS: getFloat(mapped, "grid_voltage_s", 0),
+			GridVoltageT: getFloat(mapped, "grid_voltage_t", 0),
+
+			GridCurrentR: getFloat(mapped, "grid_current_r", 0),
+			GridCurrentS: getFloat(mapped, "grid_current_s", 0),
+			GridCurrentT: getFloat(mapped, "grid_current_t", 0),
+
+			InverterTemp: getFloat(mapped, "inverter_temp", 0),
+			Frequency:    getFloat(mapped, "frequency", 0),
+
+			Alarm1: getInt(mapped, "alarm1", 0),
+			Alarm2: getInt(mapped, "alarm2", 0),
+			Alarm3: getInt(mapped, "alarm3", 0),
+		},
+	}
+
+	// STEP 6: Log conversion
+	logger.Debug(fmt.Sprintf(
+		"Converted: power=%.2fW, temp=%.1f°C, pv1v=%.1fV, freq=%.2fHz",
+		record.Data.TotalOutputPower,
+		record.Data.InverterTemp,
+		record.Data.PV1Voltage,
+		record.Data.Frequency,
+	))
+
+	// STEP 7: Add to batch for writing
 	svc.batch.Add(record)
+
 	return nil
 }
 
 var shortKeyMap = map[string]string{
-	"slave_id": "slid",
+	"slave_id":  "slid",
 	"serial_no": "sno",
-	"model": "model",
+	"model":     "model",
 
-	"power": "p",
+	"power":        "p",
 	"total_energy": "e",
 	"today_energy": "te",
 
@@ -201,7 +239,7 @@ var shortKeyMap = map[string]string{
 	"grid_current_t": "gct",
 
 	"temperature": "itmp",
-	"frequency": "fr",
+	"frequency":   "fr",
 
 	"alarm1": "al1",
 	"alarm2": "al2",
@@ -239,7 +277,8 @@ func (svc *Service) processRawDataLoop() {
 
 		for _, raw := range unprocessed {
 			rawID := raw.ID.Hex()
-			if err := svc.processAndStoreUltra(ctx, rawID, raw.Data); err != nil {
+
+			if err := svc.processAndStore(ctx, rawID, raw.Data, raw.RequestID); err != nil {
 				if markErr := svc.rawRepo.MarkError(ctx, rawID, err.Error()); markErr != nil {
 					logger.Error(fmt.Sprintf("Failed to mark error: %v", markErr))
 				}
@@ -372,20 +411,20 @@ func (svc *Service) CreateMapping(mapping *domain.DataSourceMapping) error {
 		return fmt.Errorf("mapper not initialized")
 	}
 	svc.cache.MappingCache.Clear()
-	
+
 	// Insert into MongoDB and reload
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	mapping.Active = true
 	mapping.CreatedAt = time.Now()
 	mapping.UpdatedAt = time.Now()
-	
+
 	_, err := svc.mapper.collection.InsertOne(ctx, mapping)
 	if err != nil {
 		return err
 	}
-	
+
 	return svc.mapper.Load()
 }
 
@@ -395,19 +434,19 @@ func (svc *Service) UpdateMapping(sourceID string, mapping *domain.DataSourceMap
 		return fmt.Errorf("mapper not initialized")
 	}
 	svc.cache.MappingCache.Clear()
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	mapping.UpdatedAt = time.Now()
 	filter := map[string]interface{}{"source_id": sourceID}
 	update := map[string]interface{}{"$set": mapping}
-	
+
 	_, err := svc.mapper.collection.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return err
 	}
-	
+
 	return svc.mapper.Load()
 }
 
@@ -417,10 +456,10 @@ func (svc *Service) DeleteMapping(sourceID string) error {
 		return fmt.Errorf("mapper not initialized")
 	}
 	svc.cache.MappingCache.Clear()
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	filter := map[string]interface{}{"source_id": sourceID}
 	update := map[string]interface{}{
 		"$set": map[string]interface{}{
@@ -428,12 +467,12 @@ func (svc *Service) DeleteMapping(sourceID string) error {
 			"updated_at": time.Now(),
 		},
 	}
-	
+
 	_, err := svc.mapper.collection.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return err
 	}
-	
+
 	return svc.mapper.Load()
 }
 
@@ -447,51 +486,50 @@ func (svc *Service) ReprocessRawData(ctx context.Context, rawID string) error {
 }
 func (svc *Service) convertToRecord(data map[string]interface{}, timestamp time.Time) domain.InverterData {
 
-    return domain.InverterData{
-        DeviceType:     getString(data, "device_type", ""),
-        DeviceName:     getString(data, "device_name", ""),
-        DeviceID:       getString(data, "device_id", ""),
-        SignalStrength: getString(data, "signal_strength", ""),
-        Timestamp:      timestamp,
+	return domain.InverterData{
+		DeviceType:     getString(data, "device_type", ""),
+		DeviceName:     getString(data, "device_name", ""),
+		DeviceID:       getString(data, "device_id", ""),
+		SignalStrength: getString(data, "signal_strength", ""),
+		Timestamp:      timestamp,
 
-        Data: domain.InverterDetails{
-            SlaveID:   getString(data, "slid", getString(data, "slave_id", "")),
-            SerialNo:  getString(data, "sno", getString(data, "serial_no", "")),
-            ModelName: getString(data, "model", getString(data, "model_name", "")),
+		Data: domain.InverterDetails{
+			SlaveID:   getString(data, "slid", getString(data, "slave_id", "")),
+			SerialNo:  getString(data, "sno", getString(data, "serial_no", "")),
+			ModelName: getString(data, "model", getString(data, "model_name", "")),
 
-            TotalOutputPower: getFloat(data, "p", getFloat(data, "total_output_power", 0)),
-            TotalEnergy:      getFloat(data, "e", getFloat(data, "total_e", 0)),
-            TodayEnergy:      getFloat(data, "te", getFloat(data, "today_e", 0)),
+			TotalOutputPower: getFloat(data, "p", getFloat(data, "total_output_power", 0)),
+			TotalEnergy:      getFloat(data, "e", getFloat(data, "total_e", 0)),
+			TodayEnergy:      getFloat(data, "te", getFloat(data, "today_e", 0)),
 
-            PV1Voltage: getFloat(data, "pv1v", getFloat(data, "pv1_voltage", 0)),
-            PV1Current: getFloat(data, "pv1c", getFloat(data, "pv1_current", 0)),
+			PV1Voltage: getFloat(data, "pv1v", getFloat(data, "pv1_voltage", 0)),
+			PV1Current: getFloat(data, "pv1c", getFloat(data, "pv1_current", 0)),
 
-            PV2Voltage: getFloat(data, "pv2v", getFloat(data, "pv2_voltage", 0)),
-            PV2Current: getFloat(data, "pv2c", getFloat(data, "pv2_current", 0)),
+			PV2Voltage: getFloat(data, "pv2v", getFloat(data, "pv2_voltage", 0)),
+			PV2Current: getFloat(data, "pv2c", getFloat(data, "pv2_current", 0)),
 
-            PV3Voltage: getFloat(data, "pv3v", 0),
-            PV3Current: getFloat(data, "pv3c", 0),
-            PV4Voltage: getFloat(data, "pv4v", 0),
-            PV4Current: getFloat(data, "pv4c", 0),
+			PV3Voltage: getFloat(data, "pv3v", 0),
+			PV3Current: getFloat(data, "pv3c", 0),
+			PV4Voltage: getFloat(data, "pv4v", 0),
+			PV4Current: getFloat(data, "pv4c", 0),
 
-            GridVoltageR: getFloat(data, "gvr", getFloat(data, "grid_voltage_r", 0)),
-            GridVoltageS: getFloat(data, "gvs", getFloat(data, "grid_voltage_s", 0)),
-            GridVoltageT: getFloat(data, "gvt", getFloat(data, "grid_voltage_t", 0)),
+			GridVoltageR: getFloat(data, "gvr", getFloat(data, "grid_voltage_r", 0)),
+			GridVoltageS: getFloat(data, "gvs", getFloat(data, "grid_voltage_s", 0)),
+			GridVoltageT: getFloat(data, "gvt", getFloat(data, "grid_voltage_t", 0)),
 
-            GridCurrentR: getFloat(data, "gcr", getFloat(data, "grid_current_r", 0)),
-            GridCurrentS: getFloat(data, "gcs", getFloat(data, "grid_current_s", 0)),
-            GridCurrentT: getFloat(data, "gct", getFloat(data, "grid_current_t", 0)),
+			GridCurrentR: getFloat(data, "gcr", getFloat(data, "grid_current_r", 0)),
+			GridCurrentS: getFloat(data, "gcs", getFloat(data, "grid_current_s", 0)),
+			GridCurrentT: getFloat(data, "gct", getFloat(data, "grid_current_t", 0)),
 
-            InverterTemp: getFloat(data, "itmp", getFloat(data, "temperature", 0)),
-            Frequency:    getFloat(data, "fr", getFloat(data, "frequency", 0)),
+			InverterTemp: getFloat(data, "itmp", getFloat(data, "temperature", 0)),
+			Frequency:    getFloat(data, "fr", getFloat(data, "frequency", 0)),
 
-            Alarm1: getInt(data, "al1", 0),
-            Alarm2: getInt(data, "al2", 0),
-            Alarm3: getInt(data, "al3", 0),
-        },
-    }
+			Alarm1: getInt(data, "al1", 0),
+			Alarm2: getInt(data, "al2", 0),
+			Alarm3: getInt(data, "al3", 0),
+		},
+	}
 }
-
 
 // reportStats prints statistics periodically
 func (svc *Service) reportStats() {
@@ -540,29 +578,66 @@ func (svc *Service) Close() error {
 	}
 	return nil
 }
-
-// Helper functions
 func getString(data map[string]interface{}, key, defaultValue string) string {
-	if val, ok := data[key].(string); ok {
-		return val
+	if data == nil {
+		return defaultValue
+	}
+	if val, ok := data[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+		return fmt.Sprintf("%v", val)
 	}
 	return defaultValue
 }
 
 func getInt(data map[string]interface{}, key string, defaultValue int) int {
-	switch val := data[key].(type) {
-	case int:
-		return val
-	case int64:
-		return int(val)
-	case float64:
-		return int(val)
-	case float32:
-		return int(val)
-	default:
+	if data == nil {
 		return defaultValue
 	}
+	if val, ok := data[key]; ok {
+		switch v := val.(type) {
+		case int:
+			return v
+		case int32:
+			return int(v)
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case float32:
+			return int(v)
+		}
+	}
+	return defaultValue
 }
+
+// func getFloat(data map[string]interface{}, key string, defaultValue float64) float64 {
+// 	if data == nil {
+// 		return defaultValue
+// 	}
+// 	if val, ok := data[key]; ok {
+// 		switch v := val.(type) {
+// 		case float64:
+// 			return v
+// 		case float32:
+// 			return float64(v)
+// 		case int:
+// 			return float64(v)
+// 		case int32:
+// 			return float64(v)
+// 		case int64:
+// 			return float64(v)
+// 		case uint:
+// 			return float64(v)
+// 		case uint32:
+// 			return float64(v)
+// 		case uint64:
+// 			return float64(v)
+// 		}
+// 	}
+// 	return defaultValue
+// }
 
 func ensureRequestIDZero(data map[string]interface{}) string {
 	if data != nil {

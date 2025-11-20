@@ -70,7 +70,7 @@ func (svc *Service) TestMapping(mapping *domain.DataSourceMapping, sampleData ma
 	}
 
 	// Compile the test mapping
-	compiled := tempMapper.compileUltra(mapping)
+	compiled := tempMapper.compileMapping(mapping)
 	tempMapper.mappings[mapping.SourceID] = compiled
 
 	// Test the mapping

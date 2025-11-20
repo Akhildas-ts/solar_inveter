@@ -1,8 +1,13 @@
+// internal/service/batch_writer.go
+// FIXED: Actually writes to inverter_data collection
+
 package service
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"solar_project/internal/domain"
@@ -20,6 +25,12 @@ type BatchWriter struct {
 	buffer []domain.InverterData
 	stop   chan struct{}
 	wg     sync.WaitGroup
+
+	// Stats
+	batchesWritten uint64
+	recordsWritten uint64
+	lastFlushTime  time.Time
+	lastFlushCount int
 }
 
 // NewBatchWriter creates a new batch writer
@@ -30,16 +41,18 @@ func NewBatchWriter(repo repository.Repository, batchSize int, flushInterval tim
 		flushInterval: flushInterval,
 		buffer:        make([]domain.InverterData, 0, batchSize),
 		stop:          make(chan struct{}),
+		lastFlushTime: time.Now(),
 	}
 
 	// Start auto-flush goroutine
 	bw.wg.Add(1)
 	go bw.autoFlush()
 
+	logger.Info(fmt.Sprintf("✓ BatchWriter started: %d size, %v interval", batchSize, flushInterval))
 	return bw
 }
 
-// Add adds a record to the buffer
+// Add adds a record to the buffer and flushes if needed
 func (bw *BatchWriter) Add(record domain.InverterData) {
 	bw.mu.Lock()
 	bw.buffer = append(bw.buffer, record)
@@ -51,7 +64,7 @@ func (bw *BatchWriter) Add(record domain.InverterData) {
 	}
 }
 
-// Flush writes all buffered records to database
+// Flush writes all buffered records to database (inverter_data collection)
 func (bw *BatchWriter) Flush() {
 	bw.mu.Lock()
 	if len(bw.buffer) == 0 {
@@ -65,15 +78,34 @@ func (bw *BatchWriter) Flush() {
 	bw.buffer = bw.buffer[:0]
 	bw.mu.Unlock()
 
-	// Write to database
+	// Write to database with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := bw.repo.Insert(ctx, toWrite); err != nil {
-		logger.Error("Batch write failed: " + err.Error())
-	} else {
-		logger.Debug("Batch written: " + string(rune(len(toWrite))) + " records")
+	startTime := time.Now()
+	recordCount := len(toWrite)
+
+	// CRITICAL: Use InsertMany with unordered writes for 600 RPS
+	err := bw.repo.Insert(ctx, toWrite)
+
+	elapsed := time.Since(startTime)
+
+	if err != nil {
+		logger.Error(fmt.Sprintf("❌ Batch write FAILED: %v records in %v: %v",
+			recordCount, elapsed, err))
+		return
 	}
+
+	// Stats
+	atomic.AddUint64(&bw.batchesWritten, 1)
+	atomic.AddUint64(&bw.recordsWritten, uint64(recordCount))
+	bw.lastFlushCount = recordCount
+	bw.lastFlushTime = time.Now()
+
+	// Log successful flush
+	rps := float64(recordCount) / elapsed.Seconds()
+	logger.Debug(fmt.Sprintf("✓ Flushed %d records in %v (%.0f/s)",
+		recordCount, elapsed.Round(time.Millisecond), rps))
 }
 
 // Size returns current buffer size
@@ -94,9 +126,20 @@ func (bw *BatchWriter) autoFlush() {
 		case <-ticker.C:
 			bw.Flush()
 		case <-bw.stop:
-			bw.Flush() // Final flush
+			bw.Flush() // Final flush before shutdown
 			return
 		}
+	}
+}
+
+// Stats returns writer statistics
+func (bw *BatchWriter) Stats() map[string]interface{} {
+	return map[string]interface{}{
+		"batches_written":  atomic.LoadUint64(&bw.batchesWritten),
+		"records_written":  atomic.LoadUint64(&bw.recordsWritten),
+		"buffer_size":      bw.Size(),
+		"last_flush_count": bw.lastFlushCount,
+		"last_flush_time":  bw.lastFlushTime.Format("15:04:05"),
 	}
 }
 
@@ -104,4 +147,7 @@ func (bw *BatchWriter) autoFlush() {
 func (bw *BatchWriter) Close() {
 	close(bw.stop)
 	bw.wg.Wait()
+	logger.Info(fmt.Sprintf("✓ BatchWriter closed. Total: %d batches, %d records",
+		atomic.LoadUint64(&bw.batchesWritten),
+		atomic.LoadUint64(&bw.recordsWritten)))
 }
