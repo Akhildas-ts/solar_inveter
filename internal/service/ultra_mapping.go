@@ -24,13 +24,13 @@ type ScaleFunc func(int) int
 
 // Pre-compiled scale functions (THESE DO THE ACTUAL CONVERSION)
 var (
-	ScalePowerMW    = func(v int) int { return v / 1000 }  // 3432000 → 3432 W
-	ScaleEnergy1000 = func(v int) int { return v / 1000 }  // 110130000 → 110130 Wh
-	ScaleVoltage100 = func(v int) int { return v / 100 }   // 45640 → 456 V (0.01V units)
-	ScaleCurrent100 = func(v int) int { return v / 100 }   // 36000 → 360 A (0.01A units)
-	ScaleTemp10     = func(v int) int { return v / 10 }    // 530 → 53°C
-	ScaleFreq1000   = func(v int) int { return v / 1000 }  // 499900 → 499 Hz (0.001Hz)
-	ScaleNone       = func(v int) int { return v }         // No scaling
+	ScalePowerMW    = func(v int) int { return v / 1000 } // 3432000 → 3432 W
+	ScaleEnergy1000 = func(v int) int { return v / 1000 } // 110130000 → 110130 Wh
+	ScaleVoltage100 = func(v int) int { return v / 100 }  // 45640 → 456 V (0.01V units)
+	ScaleCurrent100 = func(v int) int { return v / 100 }  // 36000 → 360 A (0.01A units)
+	ScaleTemp10     = func(v int) int { return v / 10 }   // 530 → 53°C
+	ScaleFreq1000   = func(v int) int { return v / 1000 } // 499900 → 499 Hz (0.001Hz)
+	ScaleNone       = func(v int) int { return v }        // No scaling
 )
 
 // UltraFieldSpec - Field with pre-compiled scale function
@@ -68,7 +68,7 @@ func NewUltraMapper(db *config.MongoDatabase) (*UltraMapper, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	indexModel := mongo.IndexModel{
 		Keys:    bson.D{{Key: "source_id", Value: 1}},
 		Options: options.Index().SetUnique(true),
@@ -110,7 +110,7 @@ func (m *UltraMapper) Load() error {
 		if err := cursor.Decode(&mapping); err != nil {
 			continue
 		}
-		
+
 		compiled := m.compileUltra(&mapping)
 		newMappings[mapping.SourceID] = compiled
 	}
@@ -138,7 +138,7 @@ func (m *UltraMapper) compileUltra(src *domain.DataSourceMapping) *UltraMapping 
 		}
 
 		ultra.Fields = append(ultra.Fields, spec)
-		
+
 		if field.Required {
 			ultra.RequiredKeys[field.SourceField] = true
 		}
@@ -233,7 +233,7 @@ func (m *UltraMapper) DetectSourceID(data map[string]interface{}) string {
 				break
 			}
 		}
-		
+
 		if !allRequiredPresent {
 			continue
 		}
@@ -273,16 +273,16 @@ func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (m
 	}
 
 	result := make(map[string]interface{}, len(mapping.Fields))
-	
+
 	for _, spec := range mapping.Fields {
 		// Get raw value
 		rawValue := extractValue(dataSource, data, spec.SourceKey)
-		
+
 		// Check required
 		if rawValue == nil && spec.Required {
 			return nil, fmt.Errorf("required field missing: %s", spec.SourceKey)
 		}
-		
+
 		if rawValue == nil {
 			if spec.DefaultVal != 0 {
 				result[spec.TargetName] = spec.DefaultVal
@@ -335,58 +335,58 @@ func fastToInt(val interface{}) int {
 	}
 }
 
+// these function will convert the data formate (client) to server side
+// seedUltraDefaults() runs
+// mapping inserted or updated in Mongo
+// mapping loaded into memory
+
 func (m *UltraMapper) seedUltraDefaults() error {
 	defaults := []domain.DataSourceMapping{
 		{
 			SourceID:    "Inv",
-			Description: "FoxESS Inverter (Ultra-Optimized with Correct Scaling)",
+			Description: "FoxESS long-key format (client → server)",
 			NestedPath:  "data",
 			Mappings: []domain.FieldMapping{
-				// STRING FIELDS (no scaling)
-				{SourceField: "sno", StandardField: "serial_no", DataType: "string", Required: true},
-				{SourceField: "slid", StandardField: "slave_id", DataType: "string"},
-				{SourceField: "model", StandardField: "model", DataType: "string"},
-				
-				// INTEGER FIELDS (with scaling)
-				// Power: 3432000 → 3432 W
-				{SourceField: "p", StandardField: "power", DataType: "int", Transform: "divide:1000"},
-				
-				// Energy: 110130000 → 110130 Wh, 418000 → 418 Wh
-				{SourceField: "e", StandardField: "today_energy", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "te", StandardField: "total_energy", DataType: "int", Transform: "divide:1000"},
-				
-				// PV Voltages: 45640 → 456 V (0.01V precision)
-				{SourceField: "pv1v", StandardField: "pv1_voltage", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv2v", StandardField: "pv2_voltage", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv3v", StandardField: "pv3_voltage", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv4v", StandardField: "pv4_voltage", DataType: "int", Transform: "divide:100"},
-				
-				// PV Currents: 36000 → 360 A (0.01A precision)
-				{SourceField: "pv1c", StandardField: "pv1_current", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv2c", StandardField: "pv2_current", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv3c", StandardField: "pv3_current", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv4c", StandardField: "pv4_current", DataType: "int", Transform: "divide:100"},
-				
-				// Grid Voltages: 25130 → 251 V (0.01V precision)
-				{SourceField: "gvr", StandardField: "grid_voltage_r", DataType: "int", Transform: "divide:100"},
-				{SourceField: "gvs", StandardField: "grid_voltage_s", DataType: "int", Transform: "divide:100"},
-				{SourceField: "gvt", StandardField: "grid_voltage_t", DataType: "int", Transform: "divide:100"},
-				
-				// Grid Currents: 4670000 → 4670 A (0.001A precision)
-				{SourceField: "gcr", StandardField: "grid_current_r", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "gcs", StandardField: "grid_current_s", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "gct", StandardField: "grid_current_t", DataType: "int", Transform: "divide:1000"},
-				
-				// Temperature: 530 → 53°C
-				{SourceField: "itmp", StandardField: "temperature", DataType: "int", Transform: "divide:10"},
-				
-				// Frequency: 499900 → 499 Hz (0.001Hz precision)
-				{SourceField: "fr", StandardField: "frequency", DataType: "int", Transform: "divide:1000"},
-				
-				// Alarms (no scaling)
-				{SourceField: "al1", StandardField: "alarm1", DataType: "int", DefaultValue: 0},
-				{SourceField: "al2", StandardField: "alarm2", DataType: "int", DefaultValue: 0},
-				{SourceField: "al3", StandardField: "alarm3", DataType: "int", DefaultValue: 0},
+
+				// STRING FIELDS
+				{SourceField: "slaveid", StandardField: "slave_id", DataType: "string"},
+				{SourceField: "serialno", StandardField: "serial_no", DataType: "string", Required: true},
+				{SourceField: "modelname", StandardField: "model_name", DataType: "string"},
+				{SourceField: "totaloutputpower", StandardField: "power", DataType: "float", Transform: "divide:1000"},
+
+				// POWER + ENERGY
+				{SourceField: "total_output_power", StandardField: "power", DataType: "float", Transform: "divide:1000"},
+				{SourceField: "today_e", StandardField: "today_e", DataType: "float", Transform: "divide:1000"},
+				{SourceField: "total_e", StandardField: "total_e", DataType: "float", Transform: "divide:1000"},
+
+				// PV VOLTAGE/CURRENT
+				{SourceField: "pv1_voltage", StandardField: "pv1_v", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv1_current", StandardField: "pv1_c", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv2_voltage", StandardField: "pv2_v", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv2_current", StandardField: "pv2_c", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv3_voltage", StandardField: "pv3_v", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv3_current", StandardField: "pv3_c", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv4_voltage", StandardField: "pv4_v", DataType: "float", Transform: "divide:100"},
+				{SourceField: "pv4_current", StandardField: "pv4_c", DataType: "float", Transform: "divide:100"},
+
+				// GRID VOLTAGES
+				{SourceField: "grid_voltage_r", StandardField: "g_v_r", DataType: "float", Transform: "divide:100"},
+				{SourceField: "grid_voltage_s", StandardField: "g_v_s", DataType: "float", Transform: "divide:100"},
+				{SourceField: "grid_voltage_t", StandardField: "g_v_t", DataType: "float", Transform: "divide:100"},
+
+				// GRID CURRENTS
+				{SourceField: "grid_current_r", StandardField: "g_c_r", DataType: "float", Transform: "divide:1000"},
+				{SourceField: "grid_current_s", StandardField: "g_ct_s", DataType: "float", Transform: "divide:1000"},
+				{SourceField: "grid_current_t", StandardField: "g_c_t", DataType: "float", Transform: "divide:1000"},
+
+				// TEMP + FREQUENCY
+				{SourceField: "inverter_temp", StandardField: "temp", DataType: "float", Transform: "divide:10"},
+				{SourceField: "frequency", StandardField: "freq", DataType: "float", Transform: "divide:1000"},
+
+				// ALARMS
+				{SourceField: "alarm_1", StandardField: "al1", DataType: "float", DefaultValue: 0},
+				{SourceField: "alarm_2", StandardField: "al2", DataType: "float", DefaultValue: 0},
+				{SourceField: "alarm_3", StandardField: "al3", DataType: "float", DefaultValue: 0},
 			},
 			Active:    true,
 			CreatedAt: time.Now(),
@@ -401,17 +401,15 @@ func (m *UltraMapper) seedUltraDefaults() error {
 		count, _ := m.collection.CountDocuments(ctx, bson.M{"source_id": mapping.SourceID})
 		if count == 0 {
 			m.collection.InsertOne(ctx, mapping)
-			logger.Info(fmt.Sprintf("Created mapping for source_id: %s", mapping.SourceID))
 		} else {
-			// UPDATE existing mapping
+			//Only update mapping definition if code changed
 			filter := bson.M{"source_id": mapping.SourceID}
 			update := bson.M{"$set": mapping}
 			m.collection.UpdateOne(ctx, filter, update)
-			logger.Info(fmt.Sprintf("Updated mapping for source_id: %s", mapping.SourceID))
 		}
 	}
-
-	return m.Load()
+	//Reload mapping into UltraMapper memory
+	return m.Load() //// in-memory cache
 }
 
 func (m *UltraMapper) autoReload() {
