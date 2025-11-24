@@ -1,6 +1,3 @@
-// internal/service/batch_writer.go
-// FIXED: Actually writes to inverter_data collection
-
 package service
 
 import (
@@ -64,7 +61,7 @@ func (bw *BatchWriter) Add(record domain.InverterData) {
 	}
 }
 
-// Flush writes all buffered records to database (inverter_data collection)
+// Flush writes all buffered records to inverter_data collection
 func (bw *BatchWriter) Flush() {
 	bw.mu.Lock()
 	if len(bw.buffer) == 0 {
@@ -78,25 +75,25 @@ func (bw *BatchWriter) Flush() {
 	bw.buffer = bw.buffer[:0]
 	bw.mu.Unlock()
 
-	// Write to database with timeout
+	// CRITICAL: Actually write to database
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	startTime := time.Now()
 	recordCount := len(toWrite)
 
-	// CRITICAL: Use InsertMany with unordered writes for 600 RPS
+	// THIS IS THE KEY LINE - It calls MongoDB InsertMany
 	err := bw.repo.Insert(ctx, toWrite)
 
 	elapsed := time.Since(startTime)
 
 	if err != nil {
-		logger.Error(fmt.Sprintf("❌ Batch write FAILED: %v records in %v: %v",
+		logger.Error(fmt.Sprintf("❌ Batch write to inverter_data FAILED: %v records in %v: %v",
 			recordCount, elapsed, err))
 		return
 	}
 
-	// Stats
+	// Update stats
 	atomic.AddUint64(&bw.batchesWritten, 1)
 	atomic.AddUint64(&bw.recordsWritten, uint64(recordCount))
 	bw.lastFlushCount = recordCount
@@ -104,7 +101,7 @@ func (bw *BatchWriter) Flush() {
 
 	// Log successful flush
 	rps := float64(recordCount) / elapsed.Seconds()
-	logger.Debug(fmt.Sprintf("✓ Flushed %d records in %v (%.0f/s)",
+	logger.Info(fmt.Sprintf("✅ Flushed %d records to inverter_data in %v (%.0f/s)",
 		recordCount, elapsed.Round(time.Millisecond), rps))
 }
 
@@ -145,9 +142,11 @@ func (bw *BatchWriter) Stats() map[string]interface{} {
 
 // Close stops the batch writer and flushes remaining data
 func (bw *BatchWriter) Close() {
+	logger.Info("🛑 BatchWriter closing...")
 	close(bw.stop)
 	bw.wg.Wait()
-	logger.Info(fmt.Sprintf("✓ BatchWriter closed. Total: %d batches, %d records",
+	bw.Flush() // Extra flush to be safe
+	logger.Info(fmt.Sprintf("✓ BatchWriter closed. Total: %d batches, %d records written to inverter_data",
 		atomic.LoadUint64(&bw.batchesWritten),
 		atomic.LoadUint64(&bw.recordsWritten)))
 }

@@ -84,7 +84,6 @@ func NewService(db config.Database, cfg *config.Config) *Service {
 	return svc
 }
 
-// ProcessData - Fixed version that properly stores data
 func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 	atomic.AddUint64(&svc.receivedCount, 1)
 
@@ -102,7 +101,8 @@ func (svc *Service) ProcessData(rawData map[string]interface{}) error {
 	}
 	atomic.AddUint64(&svc.rawCount, 1)
 
-	// STEP 2: Process and store
+	// STEP 2: Process SYNCHRONOUSLY (not in goroutine)
+	// This ensures the batch writer gets the data before we return
 	if err := svc.processAndStore(ctx, rawID, rawData, requestID); err != nil {
 		if markErr := svc.rawRepo.MarkError(ctx, rawID, err.Error()); markErr != nil {
 			logger.Error(fmt.Sprintf("Failed to mark raw data error: %v", markErr))

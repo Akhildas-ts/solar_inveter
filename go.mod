@@ -1,6 +1,8 @@
 module solar_project
 
-go 1.23.10
+go 1.24.0
+
+toolchain go1.24.9
 
 require (
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.10.0
@@ -57,7 +59,8 @@ require (
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/term v0.37.0
 	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/tools v0.36.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

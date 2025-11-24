@@ -6,6 +6,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"solar_project/internal/domain"
 	"solar_project/internal/service"
@@ -253,11 +254,11 @@ func validateCreateMappingRequest(req *CreateMappingRequest) error {
 		// Validate transform format
 		if field.Transform != "" {
 			// Parse transform (e.g., "divide:1000")
-			var op string
-			var val float64
-			if n, _ := fmt.Sscanf(field.Transform, "%s:%f", &op, &val); n != 2 {
+			parts := strings.Split(field.Transform, ":")
+			if len(parts) != 2 {
 				return fmt.Errorf("mapping[%d]: invalid transform format (use 'operation:value', e.g., 'divide:1000')", i)
 			}
+			op := parts[0]
 			if !validTransforms[op] {
 				return fmt.Errorf("mapping[%d]: invalid transform operation '%s' (use: multiply, divide, add, subtract)", i, op)
 			}
