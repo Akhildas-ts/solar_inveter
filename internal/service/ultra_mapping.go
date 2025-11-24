@@ -92,15 +92,26 @@ func (m *UltraMapper) Load() error {
 	for cursor.Next(ctx) {
 		var mapping domain.DataSourceMapping
 		if err := cursor.Decode(&mapping); err != nil {
+			logger.Info(fmt.Sprintf("❌ Failed to decode mapping: %v", err))
 			continue
 		}
 
+		logger.Info(fmt.Sprintf("📥 Loading mapping: %s with %d field mappings", mapping.SourceID, len(mapping.Mappings)))
+
+		// DEBUG: Show actual field names from MongoDB
+		sampleFields := []string{}
+		for i := 0; i < 5 && i < len(mapping.Mappings); i++ {
+			sampleFields = append(sampleFields, mapping.Mappings[i].SourceField)
+		}
+		logger.Info(fmt.Sprintf("🔎 Sample SourceFields from DB: %v", sampleFields))
+
 		compiled := m.compileMapping(&mapping)
+		logger.Info(fmt.Sprintf("✅ Compiled mapping: %s with %d specs", mapping.SourceID, len(compiled.Specs)))
 		newMappings[mapping.SourceID] = compiled
 	}
 
 	m.mappings = newMappings
-	logger.Debug(fmt.Sprintf("Loaded %d mappings into memory", len(m.mappings)))
+	logger.Info(fmt.Sprintf("🗺️  Loaded %d source mappings into memory", len(m.mappings)))
 	return nil
 }
 
@@ -189,10 +200,18 @@ func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (m
 	if mapping.NestedPath != "" {
 		if nested, ok := data[mapping.NestedPath].(map[string]interface{}); ok {
 			dataSource = nested
+			logger.Info(fmt.Sprintf("📖 Using nested data from '%s', sample fields: slave_id=%v, total_output_power=%v",
+				mapping.NestedPath, nested["slave_id"], nested["total_output_power"]))
+		} else {
+			logger.Info(fmt.Sprintf("⚠️ NestedPath '%s' not found or not a map, using root data", mapping.NestedPath))
 		}
 	}
 
 	result := make(map[string]interface{}, len(mapping.Specs))
+	foundCount := 0
+	missingCount := 0
+	foundFields := []string{}
+	missingFields := []string{}
 
 	// Process each field spec
 	for _, spec := range mapping.Specs {
@@ -206,11 +225,16 @@ func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (m
 
 		// Handle missing values
 		if !exists {
+			missingCount++
+			missingFields = append(missingFields, spec.Source)
 			if spec.DefaultVal != nil {
 				result[spec.Target] = spec.DefaultVal
 			}
 			continue
 		}
+
+		foundCount++
+		foundFields = append(foundFields, spec.Source)
 
 		// Process value based on type
 		if spec.IsString {
@@ -229,6 +253,11 @@ func (m *UltraMapper) MapFields(sourceID string, data map[string]interface{}) (m
 			result[spec.Target] = scaledVal
 		}
 	}
+
+	logger.Info(fmt.Sprintf("🔍 Processed %d specs: %d found, %d missing. Result has %d entries",
+		len(mapping.Specs), foundCount, missingCount, len(result)))
+	logger.Info(fmt.Sprintf("✅ Found fields: %v", foundFields))
+	logger.Info(fmt.Sprintf("❌ Missing fields: %v", missingFields))
 
 	return result, nil
 }
@@ -265,42 +294,42 @@ func (m *UltraMapper) seedUltraDefaults() error {
 	defaults := []domain.DataSourceMapping{
 		{
 			SourceID:    "Inv",
-			Description: "FoxESS long-key format with integer scaling",
+			Description: "FoxESS format matching client field names",
 			NestedPath:  "data",
 			Mappings: []domain.FieldMapping{
 				// IDENTIFICATION (strings, no scaling)
-				{SourceField: "slaveid", StandardField: "slave_id", DataType: "string"},
-				{SourceField: "serialno", StandardField: "serial_no", DataType: "string", Required: true},
-				{SourceField: "modelname", StandardField: "model_name", DataType: "string"},
+				{SourceField: "slave_id", StandardField: "slave_id", DataType: "string"},
+				{SourceField: "serial_no", StandardField: "serial_no", DataType: "string", Required: true},
+				{SourceField: "model_name", StandardField: "model_name", DataType: "string"},
 
-				// POWER & ENERGY (integers scaled by divide 1000)
-				{SourceField: "totaloutputpower", StandardField: "total_output_power", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "todaye", StandardField: "today_e", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "totale", StandardField: "total_e", DataType: "int", Transform: "divide:1000"},
+				// POWER & ENERGY (already in correct units from client as float64)
+				{SourceField: "total_output_power", StandardField: "total_output_power", DataType: "float", Transform: ""},
+				{SourceField: "today_e", StandardField: "today_e", DataType: "float", Transform: ""},
+				{SourceField: "total_e", StandardField: "total_e", DataType: "float", Transform: ""},
 
-				// PV VOLTAGES (integers scaled by divide 100, stored as centivolts)
-				{SourceField: "pv1voltage", StandardField: "pv1_voltage", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv1current", StandardField: "pv1_current", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv2voltage", StandardField: "pv2_voltage", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv2current", StandardField: "pv2_current", DataType: "int", Transform: "divide:100"},
-				{SourceField: "pv3voltage", StandardField: "pv3_voltage", DataType: "int", Transform: "divide:100", DefaultValue: 0},
-				{SourceField: "pv3current", StandardField: "pv3_current", DataType: "int", Transform: "divide:100", DefaultValue: 0},
-				{SourceField: "pv4voltage", StandardField: "pv4_voltage", DataType: "int", Transform: "divide:100", DefaultValue: 0},
-				{SourceField: "pv4current", StandardField: "pv4_current", DataType: "int", Transform: "divide:100", DefaultValue: 0},
+				// PV VOLTAGES & CURRENTS (already in correct units from client as float64)
+				{SourceField: "pv1_voltage", StandardField: "pv1_voltage", DataType: "float", Transform: ""},
+				{SourceField: "pv1_current", StandardField: "pv1_current", DataType: "float", Transform: ""},
+				{SourceField: "pv2_voltage", StandardField: "pv2_voltage", DataType: "float", Transform: ""},
+				{SourceField: "pv2_current", StandardField: "pv2_current", DataType: "float", Transform: ""},
+				{SourceField: "pv3_voltage", StandardField: "pv3_voltage", DataType: "float", Transform: "", DefaultValue: 0},
+				{SourceField: "pv3_current", StandardField: "pv3_current", DataType: "float", Transform: "", DefaultValue: 0},
+				{SourceField: "pv4_voltage", StandardField: "pv4_voltage", DataType: "float", Transform: "", DefaultValue: 0},
+				{SourceField: "pv4_current", StandardField: "pv4_current", DataType: "float", Transform: "", DefaultValue: 0},
 
-				// GRID VOLTAGES (divide by 100)
-				{SourceField: "gridvoltager", StandardField: "grid_voltage_r", DataType: "int", Transform: "divide:100"},
-				{SourceField: "gridvoltages", StandardField: "grid_voltage_s", DataType: "int", Transform: "divide:100"},
-				{SourceField: "gridvoltaget", StandardField: "grid_voltage_t", DataType: "int", Transform: "divide:100"},
+				// GRID VOLTAGES (already in correct units from client as float64)
+				{SourceField: "grid_voltage_r", StandardField: "grid_voltage_r", DataType: "float", Transform: ""},
+				{SourceField: "grid_voltage_s", StandardField: "grid_voltage_s", DataType: "float", Transform: ""},
+				{SourceField: "grid_voltage_t", StandardField: "grid_voltage_t", DataType: "float", Transform: ""},
 
-				// GRID CURRENTS (divide by 1000)
-				{SourceField: "gridcurrentr", StandardField: "grid_current_r", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "gridcurrents", StandardField: "grid_current_s", DataType: "int", Transform: "divide:1000"},
-				{SourceField: "gridcurrentt", StandardField: "grid_current_t", DataType: "int", Transform: "divide:1000"},
+				// GRID CURRENTS (already in correct units from client as float64)
+				{SourceField: "grid_current_r", StandardField: "grid_current_r", DataType: "float", Transform: ""},
+				{SourceField: "grid_current_s", StandardField: "grid_current_s", DataType: "float", Transform: ""},
+				{SourceField: "grid_current_t", StandardField: "grid_current_t", DataType: "float", Transform: ""},
 
-				// TEMPERATURE & FREQUENCY
-				{SourceField: "invertertemp", StandardField: "inverter_temp", DataType: "int", Transform: "divide:10"},
-				{SourceField: "frequency", StandardField: "frequency", DataType: "int", Transform: "divide:1000"},
+				// TEMPERATURE & FREQUENCY (already in correct units from client as float64)
+				{SourceField: "inverter_temp", StandardField: "inverter_temp", DataType: "float", Transform: ""},
+				{SourceField: "frequency", StandardField: "frequency", DataType: "float", Transform: ""},
 
 				// ALARMS (no scaling)
 				{SourceField: "alarm1", StandardField: "alarm1", DataType: "int", DefaultValue: 0},

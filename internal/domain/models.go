@@ -15,37 +15,37 @@ type InverterData struct {
 	Data           InverterDetails `json:"data" bson:"data"`
 }
 type InverterDetails struct {
-    SlaveID        string  `json:"slave_id"`
-    SerialNo       string  `json:"serial_no"`
-    ModelName      string  `json:"model_name"`
+	SlaveID   string `json:"slave_id" bson:"slave_id"`
+	SerialNo  string `json:"serial_no" bson:"serial_no"`
+	ModelName string `json:"model_name" bson:"model_name"`
 
-    TotalOutputPower float64 `json:"total_output_power"`
-    TotalEnergy      float64 `json:"total_e"`
-    TodayEnergy      float64 `json:"today_e"`
+	TotalOutputPower float64 `json:"total_output_power" bson:"total_output_power"`
+	TotalEnergy      float64 `json:"total_e" bson:"total_e"`
+	TodayEnergy      float64 `json:"today_e" bson:"today_e"`
 
-    PV1Voltage float64 `json:"pv1_voltage"`
-    PV1Current float64 `json:"pv1_current"`
-    PV2Voltage float64 `json:"pv2_voltage"`
-    PV2Current float64 `json:"pv2_current"`
-    PV3Voltage float64 `json:"pv3_voltage"`
-    PV3Current float64 `json:"pv3_current"`
-    PV4Voltage float64 `json:"pv4_voltage"`
-    PV4Current float64 `json:"pv4_current"`
+	PV1Voltage float64 `json:"pv1_voltage" bson:"pv1_voltage"`
+	PV1Current float64 `json:"pv1_current" bson:"pv1_current"`
+	PV2Voltage float64 `json:"pv2_voltage" bson:"pv2_voltage"`
+	PV2Current float64 `json:"pv2_current" bson:"pv2_current"`
+	PV3Voltage float64 `json:"pv3_voltage" bson:"pv3_voltage"`
+	PV3Current float64 `json:"pv3_current" bson:"pv3_current"`
+	PV4Voltage float64 `json:"pv4_voltage" bson:"pv4_voltage"`
+	PV4Current float64 `json:"pv4_current" bson:"pv4_current"`
 
-    GridVoltageR float64 `json:"grid_voltage_r"`
-    GridVoltageS float64 `json:"grid_voltage_s"`
-    GridVoltageT float64 `json:"grid_voltage_t"`
+	GridVoltageR float64 `json:"grid_voltage_r" bson:"grid_voltage_r"`
+	GridVoltageS float64 `json:"grid_voltage_s" bson:"grid_voltage_s"`
+	GridVoltageT float64 `json:"grid_voltage_t" bson:"grid_voltage_t"`
 
-    GridCurrentR float64 `json:"grid_current_r"`
-    GridCurrentS float64 `json:"grid_current_s"`
-    GridCurrentT float64 `json:"grid_current_t"`
+	GridCurrentR float64 `json:"grid_current_r" bson:"grid_current_r"`
+	GridCurrentS float64 `json:"grid_current_s" bson:"grid_current_s"`
+	GridCurrentT float64 `json:"grid_current_t" bson:"grid_current_t"`
 
-    InverterTemp float64 `json:"inverter_temp"`
-    Frequency    float64 `json:"frequency"`
+	InverterTemp float64 `json:"inverter_temp" bson:"inverter_temp"`
+	Frequency    float64 `json:"frequency" bson:"frequency"`
 
-    Alarm1 int `json:"alarm_1"`
-    Alarm2 int `json:"alarm_2"`
-    Alarm3 int `json:"alarm_3"`
+	Alarm1 int `json:"alarm_1" bson:"alarm_1"`
+	Alarm2 int `json:"alarm_2" bson:"alarm_2"`
+	Alarm3 int `json:"alarm_3" bson:"alarm_3"`
 }
 
 // // InverterDetails contains sensor readings (SCALED VALUES)

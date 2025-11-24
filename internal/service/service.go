@@ -139,7 +139,9 @@ func (svc *Service) processAndStore(ctx context.Context, rawID string, rawData m
 		return fmt.Errorf("mapping failed: %w", err)
 	}
 
-	logger.Debug(fmt.Sprintf("Mapped %d fields from source %s", len(mapped), sourceID))
+	logger.Info(fmt.Sprintf("🔍 Mapped %d fields from source %s", len(mapped), sourceID))
+	logger.Info(fmt.Sprintf("📊 Mapped data sample: slave_id=%v, serial_no=%v, total_output_power=%v, pv1_voltage=%v",
+		mapped["slave_id"], mapped["serial_no"], mapped["total_output_power"], mapped["pv1_voltage"]))
 
 	// STEP 3: Extract device metadata
 	deviceType := sourceID
